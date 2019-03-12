@@ -4,7 +4,7 @@
 	"publisher": "discotools",
 	"repository": "https://github.com/Aerijo/vscode-discotools",
 	"description": "Provides tools for debugging the discovery board",
-	"version": "0.0.0",
+	"version": "0.0.1",
 	"engines": {
 		"vscode": "^1.32.0"
 	},
