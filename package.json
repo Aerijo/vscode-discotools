@@ -1,6 +1,7 @@
 {
 	"name": "discotools",
 	"displayName": "Discotools",
+	"publisher": "discotools",
 	"description": "Provides tools for debugging the discovery board",
 	"version": "0.1.0",
 	"engines": {
