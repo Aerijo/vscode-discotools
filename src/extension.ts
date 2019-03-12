@@ -12,15 +12,12 @@ function getBitsAndRangeForPosition (position: vscode.Position, line: string): [
 	const characterLeftOfIndex = (i: number) => i === 0 ? line.charAt(0) : line.charAt(i - 1);
 	const characterRightOfIndex = (i: number) => line.charAt(i);
 
-	// console.log(`left: ${characterLeftOfIndex(position.character)}\nright: ${characterRightOfIndex(position.character)}`);
 	{
 		const match = /^\s*(?:(.*?):)?\s*((?:[0-9A-F]{2}\s?)*)/.exec(line)!;
 		if (match[0].length < position.character) { return null; } // we are past the end, into the ASCII view
 		if (match[1] && /[^0-9A-F]/i.test(match[1])) { return null; } // is not an address; likely Offset
 		if (match[1] && match[1].length >= position.character) { return null; } // in the address
 	}
-
-	
 
 	let byte: string = "";
 	let startIndex;
@@ -42,8 +39,6 @@ function getBitsAndRangeForPosition (position: vscode.Position, line: string): [
 		startIndex = position.character - 1;
 	}
 
-	console.log(byte);
-
 	if (/[^0-9A-F]/.test(byte)) { return null; }
 
 	let bits: number;
@@ -54,7 +49,7 @@ function getBitsAndRangeForPosition (position: vscode.Position, line: string): [
 		width = match[0].length;
 	}
 
-let wide = false;
+	let wide = false;
 	if (isWideInstruction(bits)) {
 		wide = true;
 		{
