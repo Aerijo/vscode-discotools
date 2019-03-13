@@ -2,133 +2,167 @@ import * as vs from 'vscode';
 import { identifyWideInstruction } from "./disassembly/wide";
 import { identifyNarrowInstruction } from "./disassembly/narrow";
 import { INSTRUCTION } from "./disassembly/instructions";
+import { start } from 'repl';
 
 
 // NOTE: Memory view is readonly, so position logic can be simplified to use constant values
+const EXPECTED_MIN_LINE_LENGTH = 58; // last line may have fewer bytes, so the ASCII stops sooner
+const BYTES_START_INDEX = 10;
+const BYTES_END_INDEX = 57;
 
-const characterLeftOfIndex = (i: number, line: string) => i === 0 ? line.charAt(0) : line.charAt(i - 1);
-const characterRightOfIndex = (i: number, line: string) => line.charAt(i);
+class ByteIterator {
+	document: vs.TextDocument;
+	line: number;
+	index: number; // always aligns with the start of a byte
+	lineText: string;
 
-export function isWideInstruction (halfWord: number) {
-	return (halfWord & 0xE000) === 0xE000 && (halfWord & 0x1800) > 0; // first 3 bits are high && 4th or 5th is high
+	readonly startLine: number;
+	readonly startIndex: number;
+	readonly lastLine: number;
+
+	constructor (startIndex: number, startLine: number, lineText: string, document: vs.TextDocument) {
+		this.index = startIndex;
+		this.line = startLine;
+		this.lineText = lineText;
+		this.document = document;
+
+		this.lastLine = this.document.lineCount - 2; // very last line is empty (trailing newline)
+
+		this.startLine = startLine;
+		this.startIndex = startIndex;
+	}
+
+	getNextByte (): string {
+		let byte;
+		if (this.index === BYTES_END_INDEX + 1) {
+			if (this.line === this.lastLine) { return ""; }
+			this.lineText = this.document.lineAt(++this.line).text;
+			this.index = 13;
+			return this.lineText.slice(10, 12);
+		} else {
+			byte = this.lineText.slice(this.index, this.index + 2);
+			this.index += 3;
+		}
+
+		if (this.line === this.lastLine && !isValidByte(byte)) {
+			// backtrack so the range is normal
+			if (this.index === 13) {
+				this.line--;
+				this.index = BYTES_END_INDEX + 1;
+			} else {
+				this.index -= 3;
+			}
+			return "";	
+		}
+	
+		return byte;
+	}
+
+	getNextHword (): string {
+		const byte1 = this.getNextByte();
+		const byte2 = this.getNextByte();
+		return byte2 + byte1; // account for little endian
+	}
+
+	getRange (): vs.Range {
+		return new vs.Range(this.startLine, this.startIndex, this.line, this.index - 1);
+	}
 }
 
-function getByteAndStartIndex (line: string, index: number): [string, number] | null {
-	let byte: string;
-	let startIndex: number;
-
-	const leftChar = characterLeftOfIndex(index, line);
-	const rightChar = characterRightOfIndex(index, line);
-
-	if (leftChar === " ") { // " |ab "
-		byte = line.substring(index, index + 2);
-		startIndex = index;
-	} else if (rightChar === " ") { // " ab| "
-		if (index <= 1) { return null; }
-		byte = line.substring(index - 2, index);
-		startIndex = index - 2;
-	} else { // " a|b "
-		if (index === 0) { return null; }
-		byte = line.substring(index - 1, index + 1);
-		startIndex = index - 1;
-	}
-	if (/[^0-9A-F]/.test(byte)) { return null; }
-
-	return [byte, startIndex];
+export function isStartWideInstruction(hword: number) {
+	return (hword & 0xE000) === 0xE000 && (hword & 0x1800) > 0; // first 3 bits are high && 4th or 5th is high
 }
 
 enum Type {
 	HWORD,
 	WORD,
 	CUTOFF_WORD,
+	CUTOFF_HWORD,
 }
 
 type HoverInfo = {
 	type: Type;
 	range: vs.Range;
 	bits: number;
+	startAddress: string;
 };
 
-function positionIsValidByte (line: string, index: number): boolean {
-	const match = /^\s*(?:(.*?):)?\s*((?:[0-9A-F]{2}\s*)*)/.exec(line)!;
-	return !(
-		(match[0].length < index) || // we are past the end, into the ASCII view
-		(match[1] && /[^0-9A-F]/i.test(match[1])) || // is not an address; likely Offset
-		(match[1] && match[1].length >= index) // in the address
-	);
+function positionIsByte(position: vs.Position): boolean {
+	// The memory view (read only) is of the following format
+	// 01234567: 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F   ....õ.....
+	// We exclude the first line, as it is just "Offset: 00 ..."
+	return position.line > 0 && BYTES_START_INDEX <= position.character && position.character <= BYTES_END_INDEX;
 }
 
-function getFirstHWordOnLine (line: string): string | null {
-	const match = /^\s*(?:.*?:)?\s*([0-9A-F]{2})\s*([0-9A-F]{2})/.exec(line);
-	return match ? match[2] + match[1] : null;
+function isValidByte (byte: string) {
+	return /[0-9A-F]{2}/.test(byte);
 }
 
-function getHoverContext (position: vs.Position, document: vs.TextDocument): HoverInfo | null {
-	const line = document.lineAt(position).text;
+function isValidHword (byte: string) {
+	return /[0-9A-F]{4}/.test(byte);
+}
 
-	if (!positionIsValidByte(line, position.character)) { return null; }
+function lineIndexToAddressIndex (alignedIndex: number): string {
+	return ((alignedIndex - 10) / 3).toString(16).toUpperCase();
+}
 
-	const positionContext = getByteAndStartIndex(line, position.character);
-	if (positionContext === null) { return null; }
+function getHoverContext(position: vs.Position, document: vs.TextDocument): HoverInfo | null {
+	if (!positionIsByte(position)) { return null; }
 
-	const [byteString, startIndex] = positionContext;
+	const lineText = document.lineAt(position).text;
+	if (lineText.length < EXPECTED_MIN_LINE_LENGTH) { return null; }
 
-	let width = 2;
-	let bits: number;
+	
+	const startIndex = position.character - ((position.character + 2) % 3); // aligns us with the start of a byte
+	const iterator = new ByteIterator(startIndex, position.line, lineText, document);
 
-	{ // get the second half of this hword
-		const match = line.slice(startIndex + 2).match(/\s*([0-9A-F]{2})/);
-		if (!match) { return null; } // don't bother trying on unaligned hwords
-		bits = parseInt(match[1] + byteString, 16);
-		width += match[0].length;
+	const lineMemoryAddress = lineText.slice(0, 7);	// cuts off last '0'; actual line index added in next step
+	const startAddress = lineMemoryAddress + lineIndexToAddressIndex(startIndex);
+
+	const hword1 = iterator.getNextHword();
+	if (hword1.length === 0 || hword1.length === 2) {
+		return { type: Type.CUTOFF_HWORD, range: iterator.getRange(), bits: parseInt(hword1, 16), startAddress };
 	}
+	if (!isValidHword(hword1)) { return null; }
 
-	let range = new vs.Range(position.line, startIndex, position.line, startIndex + width);
-
+	let instruction = hword1;
 	let wide = false;
-	if (isWideInstruction(bits)) {
+	if (isStartWideInstruction(parseInt(hword1, 16))) {
 		wide = true;
-		{
-			const match = line.slice(startIndex + width).match(/\s*([0-9A-F]{2})\s*([0-9A-F]{2})/);
-			if (match) {
-				bits = bits * (2 ** 16) + parseInt(match[2] + match[1], 16);
-				range = range.with(undefined, range.end.translate(0, match[0].length));
-			} else {
-				if (position.line === document.lineCount) { return { bits, type: Type.CUTOFF_WORD, range }; }
-				const nextLine = document.lineAt(position.line + 1).text;
-				const hword = getFirstHWordOnLine(nextLine);
-				if (hword === null) { return { bits, type: Type.CUTOFF_WORD, range }; }
-				bits = bits * (2 ** 16) + parseInt(hword, 16);
-			}
-		}
+		const hword2 = iterator.getNextHword();
+		instruction += hword2;
+		if (!isValidHword(hword2)) { return { type: Type.CUTOFF_WORD, range: iterator.getRange(), bits: parseInt(instruction, 16), startAddress }; }
 	}
 
 	return {
 		type: wide ? Type.WORD : Type.HWORD,
-		bits,
-		range,
+		bits: parseInt(instruction, 16),
+		range: iterator.getRange(),
+		startAddress: lineMemoryAddress
 	};
 }
 
 
-export function activate (context: vs.ExtensionContext) {
+export function activate(context: vs.ExtensionContext) {
 	vs.languages.registerHoverProvider("cortex-debug.memoryview", {
-		provideHover (document: vs.TextDocument, position: vs.Position): vs.ProviderResult<vs.Hover> {
-			
+		provideHover(document: vs.TextDocument, position: vs.Position): vs.ProviderResult<vs.Hover> {
 			const context = getHoverContext(position, document);
 			if (context === null) { return null; }
+
+			let msg = ""; // TODO: Allow user provided templates for value (like snippet variables)
 			let type: string = "";
 
 			switch (context.type) {
 				case Type.HWORD: type = INSTRUCTION[identifyNarrowInstruction(context.bits)]; break;
 				case Type.WORD: type = INSTRUCTION[identifyWideInstruction(context.bits)]; break;
 				case Type.CUTOFF_WORD: type = "[cutoff word]"; break;
+				case Type.CUTOFF_HWORD: type = "[cutoff hword]"; break;
 			}
 
-			const msg = `${type}\n\n0b${context.bits.toString(2).padStart(16, '0')}\n\n0x${context.bits.toString(16).toUpperCase().padStart(4, '0')}`;
+			msg += `${type}\n\n0b${context.bits.toString(2).padStart(16, '0')}\n\n0x${context.bits.toString(16).toUpperCase().padStart(4, '0')}`;
 			return new vs.Hover(msg, context.range);
 		}
 	});
 }
 
-export function deactivate () {}
+export function deactivate() { }
