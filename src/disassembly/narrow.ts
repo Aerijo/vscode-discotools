@@ -1,7 +1,11 @@
 import { INSTRUCTION } from "./instructions";
 
+// If you're wondering why all of these are functions, and not returning the value directly,
+// it's because I intend to make them return a more fleshed out result, including variable
+// values and such.
+
 function resolveOpcode (opcode: number, hword: number, resolvers: ((hword: number) => INSTRUCTION)[]): INSTRUCTION {
-  if (opcode >= resolvers.length) { return INSTRUCTION.UNDEFINED };
+  if (opcode >= resolvers.length) { return INSTRUCTION.UNDEFINED; }
   return resolvers[opcode](hword);
 }
 
