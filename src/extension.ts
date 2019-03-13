@@ -2,8 +2,6 @@ import * as vs from 'vscode';
 import { identifyWideInstruction } from "./disassembly/wide";
 import { identifyNarrowInstruction } from "./disassembly/narrow";
 import { INSTRUCTION } from "./disassembly/instructions";
-import { start } from 'repl';
-
 
 // NOTE: Memory view is readonly, so position logic can be simplified to use constant values
 const EXPECTED_MIN_LINE_LENGTH = 58; // last line may have fewer bytes, so the ASCII stops sooner
@@ -11,25 +9,26 @@ const BYTES_START_INDEX = 10;
 const BYTES_END_INDEX = 57;
 
 class ByteIterator {
-	document: vs.TextDocument;
-	line: number;
 	index: number; // always aligns with the start of a byte
+	line: number;
 	lineText: string;
+	document: vs.TextDocument;
 
-	readonly startLine: number;
 	readonly startIndex: number;
+	readonly startLine: number;
 	readonly lastLine: number;
 
-	constructor (startIndex: number, startLine: number, lineText: string, document: vs.TextDocument) {
+	constructor (position: vs.Position, lineText: string, document: vs.TextDocument) {
+		const startIndex = position.character - ((position.character + 2) % 3); // aligns us with the start of a byte
+
 		this.index = startIndex;
-		this.line = startLine;
+		this.line = position.line;
 		this.lineText = lineText;
 		this.document = document;
 
+		this.startIndex = this.index;
+		this.startLine = this.line;
 		this.lastLine = this.document.lineCount - 2; // very last line is empty (trailing newline)
-
-		this.startLine = startLine;
-		this.startIndex = startIndex;
 	}
 
 	getNextByte (): string {
@@ -66,6 +65,10 @@ class ByteIterator {
 
 	getRange (): vs.Range {
 		return new vs.Range(this.startLine, this.startIndex, this.line, this.index - 1);
+	}
+
+	getAddressOffset (): string {
+		return ((this.index - 10) / 3).toString(16).toUpperCase();
 	}
 }
 
@@ -112,12 +115,10 @@ function getHoverContext(position: vs.Position, document: vs.TextDocument): Hove
 	const lineText = document.lineAt(position).text;
 	if (lineText.length < EXPECTED_MIN_LINE_LENGTH) { return null; }
 
-	
-	const startIndex = position.character - ((position.character + 2) % 3); // aligns us with the start of a byte
-	const iterator = new ByteIterator(startIndex, position.line, lineText, document);
+	const iterator = new ByteIterator(position, lineText, document);
 
 	const lineMemoryAddress = lineText.slice(0, 7);	// cuts off last '0'; actual line index added in next step
-	const startAddress = lineMemoryAddress + lineIndexToAddressIndex(startIndex);
+	const startAddress = lineMemoryAddress + iterator.getAddressOffset();
 
 	const hword1 = iterator.getNextHword();
 	if (hword1.length === 0 || hword1.length === 2) {
