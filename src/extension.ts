@@ -4,7 +4,7 @@ import { identifyNarrowInstruction } from "./disassembly/narrow";
 import { INSTRUCTION } from "./disassembly/instructions";
 
 
-// NOTE: Memory view is readonly, so lenient regex matches are probably less necessary
+// NOTE: Memory view is readonly, so position logic can be simplified to use constant values
 
 const characterLeftOfIndex = (i: number, line: string) => i === 0 ? line.charAt(0) : line.charAt(i - 1);
 const characterRightOfIndex = (i: number, line: string) => line.charAt(i);
@@ -66,12 +66,10 @@ function getFirstHWordOnLine (line: string): string | null {
 function getHoverContext (position: vs.Position, document: vs.TextDocument): HoverInfo | null {
 	const line = document.lineAt(position).text;
 
-	console.log("Checking line", line);
-
-	if (!positionIsValidByte(line, position.character)) { console.log("invalid byte"); return null; }
+	if (!positionIsValidByte(line, position.character)) { return null; }
 
 	const positionContext = getByteAndStartIndex(line, position.character);
-	if (positionContext === null) { console.log("invalid context"); return null; }
+	if (positionContext === null) { return null; }
 
 	const [byteString, startIndex] = positionContext;
 
@@ -86,8 +84,6 @@ function getHoverContext (position: vs.Position, document: vs.TextDocument): Hov
 	}
 
 	let range = new vs.Range(position.line, startIndex, position.line, startIndex + width);
-
-	console.log("Checking wide!!!");
 
 	let wide = false;
 	if (isWideInstruction(bits)) {
