@@ -6,20 +6,12 @@
 	"description": "Provides tools for debugging the discovery board",
 	"version": "0.0.4",
 	"engines": {
-		"vscode": "^1.32.0"
+		"vscode": "^1.30.0"
 	},
 	"activationEvents": [
 		"onLanguage:cortex-debug.memoryview"
 	],
 	"main": "./out/extension.js",
-	"contributes": {
-		"commands": [
-			{
-				"command": "extension.helloWorld",
-				"title": "Hello World"
-			}
-		]
-	},
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
 		"compile": "tsc -p ./",
