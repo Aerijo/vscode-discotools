@@ -160,9 +160,17 @@ export function activate(context: vs.ExtensionContext) {
 				case Type.CUTOFF_HWORD: type = "[cutoff hword]"; break;
 			}
 
-			msg += `${type}\n\n0b${context.bits.toString(2).padStart(16, '0')}\n\n0x${context.bits.toString(16).toUpperCase().padStart(4, '0')}`;
-			return new vs.Hover(msg, context.range);
+			msg += `${type}\n\n0b${context.bits.toString(2).padStart(16, '0')}\n\n0x${context.bits.toString(16).toUpperCase().padStart(4, '0')}\n\n[page](command:discotools.openManualPage?5)`;
+
+			const markedString = new vs.MarkdownString(msg);
+			markedString.isTrusted = true;
+
+			return new vs.Hover(markedString, context.range);
 		}
+	});
+
+	vs.commands.registerCommand("discotools.openManualPage", (page: number) => {
+		vs.window.showInformationMessage(`Opening page ${page}`);
 	});
 }
 
