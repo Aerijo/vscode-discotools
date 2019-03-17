@@ -48,7 +48,7 @@
 						"evince"
 					],
 					"description": "The PDF viewer you want to use for opening documentation.",
-					"default": "evince"
+					"default": "none"
 				}
 			}
 		}
