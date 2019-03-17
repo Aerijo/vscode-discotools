@@ -103,6 +103,8 @@ export function activate(context: vs.ExtensionContext) {
 			
 			if (config.get("pdfViewer") !== "none") {
 				msg += ` ([p${encoding.page}](command:discotools.openManualPage?${encoding.page}))`;
+			} else {
+				msg += ` (p${encoding.page})`;
 			}
 			
 			if (config.get("showBinaryAndHexValues")) {
