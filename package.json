@@ -18,6 +18,28 @@
 		"watch": "tsc -watch -p ./",
 		"postinstall": "node ./node_modules/vscode/bin/install"
 	},
+	"contributes": {
+		"configuration": {
+			"type": "object",
+			"title": "Discotools settings",
+			"properties": {
+				"discotools.armManualAbsolutePath": {
+					"type": ["string", "null"],
+					"description": "An absolute path to the manual that contains the instruction definitions.",
+					"default": null
+				},
+				"discotools.pdfViewer": {
+					"type": "string",
+					"enum": ["okular", "evince"],
+					"description": "The PDF viewer you want to use for opening documentation.",
+					"default": "okular"
+				}
+			}
+		}
+	},
+	"dependencies": {
+		"disco-disassembler": "latest"
+	},
 	"devDependencies": {
 		"typescript": "^3.3.1",
 		"vscode": "^1.1.28",
