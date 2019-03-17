@@ -102,13 +102,13 @@ export function activate(context: vs.ExtensionContext) {
 			msg += displayName;
 			
 			if (config.get("pdfViewer") !== "none") {
-				msg += ` ([p${encoding.page}](command:discotools.openManualPage?${encoding.page}))`;
+				msg += ` [[p${encoding.page}](command:discotools.openManualPage?${encoding.page})]`;
 			} else {
-				msg += ` (p${encoding.page})`;
+				msg += ` [p${encoding.page}]`;
 			}
 			
 			if (config.get("showBinaryAndHexValues")) {
-				msg += `\n\n0b${context.bits.toString(2)}\n\n0x${context.bits.toString(16)}`;
+				msg += `\n\n0b${context.bits.toString(2)}\n\n0x${context.bits.toString(16).toUpperCase()}`;
 			}
 			
 			if (config.get("showVariables")) {
