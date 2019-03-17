@@ -4,6 +4,7 @@
 	"publisher": "discotools",
 	"repository": "https://github.com/Aerijo/vscode-discotools",
 	"description": "Provides tools for debugging the discovery board",
+	"license": "MIT",
 	"version": "0.0.5",
 	"engines": {
 		"vscode": "^1.30.0"
@@ -21,24 +22,39 @@
 	"contributes": {
 		"configuration": {
 			"type": "object",
-			"title": "Discotools settings",
 			"properties": {
 				"discotools.armManualAbsolutePath": {
-					"type": ["string", "null"],
+					"title": "ARM Manual Absolute Path",
+					"type": [
+						"string",
+						"null"
+					],
 					"description": "An absolute path to the manual that contains the instruction definitions.",
 					"default": null
 				},
+				"discotools.showBinaryAndHexValues": {
+					"type": "boolean",
+					"default": false
+				},
+				"discotools.showVariables": {
+					"type": "boolean",
+					"default": true
+				},
 				"discotools.pdfViewer": {
 					"type": "string",
-					"enum": ["okular", "evince"],
+					"enum": [
+						"none",
+						"okular",
+						"evince"
+					],
 					"description": "The PDF viewer you want to use for opening documentation.",
-					"default": "okular"
+					"default": "evince"
 				}
 			}
 		}
 	},
 	"dependencies": {
-		"disco-disassembler": "latest"
+		"disco-disassembler": "0.0.1"
 	},
 	"devDependencies": {
 		"typescript": "^3.3.1",

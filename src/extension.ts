@@ -1,7 +1,7 @@
-import * as vs from 'vscode';
-import { ByteIterator } from './byteIterator';
+import * as vs from "vscode";
+import { ByteIterator } from "./byteIterator";
 import * as dd from "disco-disassembler";
-import { Encoding } from 'disco-disassembler/dist/src/instructions/encodings';
+import { Encoding } from "disco-disassembler/dist/src/instructions/encodings";
 
 import * as cp from "child_process";
 
@@ -97,17 +97,26 @@ export function activate(context: vs.ExtensionContext) {
 				return new vs.Hover(encoding.name, context.range);
 			}
 
-			msg += displayName;
-			msg += "\n\n";
-			
-			const vars = encoding.extractVariableValues(context.bits);
-			for (const [name, resolved] of Object.entries(vars)) {
-				msg += `${name}=${resolved.value}, `;
-			}
-			msg = msg.substring(0, msg.length - 2) + "\n\n";
+			const config = vs.workspace.getConfiguration("discotools");
 
-			msg += `[p${encoding.page}](command:discotools.openManualPage?${encoding.page})`;
-			msg += ` [details](command:discotools.logEncodingDetails?${context.bits})`;
+			msg += displayName;
+			
+			if (config.get("pdfViewer") !== "none") {
+				msg += ` ([p${encoding.page}](command:discotools.openManualPage?${encoding.page}))`;
+			}
+			
+			if (config.get("showBinaryAndHexValues")) {
+				msg += `\n\n0b${context.bits.toString(2)}\n\n0x${context.bits.toString(16)}`;
+			}
+			
+			if (config.get("showVariables")) {
+				const vars = encoding.extractVariableValues(context.bits);
+				msg += "\n\n";
+				for (const [name, resolved] of Object.entries(vars)) {
+					msg += `${name}=${resolved.value}, `;
+				}
+				msg = msg.substring(0, msg.length - 2);
+			}
 			
 			const markedString = new vs.MarkdownString(msg);
 			markedString.isTrusted = true;
@@ -145,7 +154,7 @@ export function activate(context: vs.ExtensionContext) {
 	});
 
 	vs.commands.registerCommand("discotools.logEncodingDetails", (bits: number) => {
-		vs.window.showInformationMessage(`0b${bits.toString(2)}\n\n0x${bits.toString(16)}`, {modal: true});
+		vs.window.showInformationMessage(`0b${bits.toString(2)}\n\n\n\n0x${bits.toString(16)}`);
 	});
 }
 

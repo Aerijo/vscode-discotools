@@ -1,4 +1,4 @@
-import * as vs from 'vscode';
+import * as vs from "vscode";
 
 // NOTE: Memory view is readonly, so position logic can be simplified to use constant values
 const BYTES_START_INDEX = 10;
