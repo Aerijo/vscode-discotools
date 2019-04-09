@@ -17,7 +17,7 @@ main:
     bl lcd_write_string
     bl lcd_update_display
 
-    @ display shows "   HEL"
+    @ display shows "   'HE"
 
     ldr r0, =2000000
     delay_loop1:
