@@ -44,7 +44,7 @@
  */
 
 
- .syntax unified
+.syntax unified
 
 @@@@@@@@@@@@@@@@@@@@
 @@ User constants @@
