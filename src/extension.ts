@@ -4,6 +4,7 @@ import * as dd from "disco-disassembler";
 import { Encoding } from "disco-disassembler/dist/src/instructions/encodings";
 
 import * as cp from "child_process";
+import { print } from "util";
 
 const EXPECTED_MIN_LINE_LENGTH = 58; // last line may have fewer bytes, so the ASCII stops sooner
 
@@ -127,6 +128,22 @@ export function activate(context: vs.ExtensionContext) {
 		}
 	});
 
+	// vs.languages.registerDefinitionProvider("arm", {
+	// 	provideDefinition(document, position, token) {
+
+	// 		const range = document.getWordRangeAtPosition(position);
+
+	// 		console.log(range);
+
+	// 		const word = document.getText(range);
+
+	// 		console.log(word);
+			
+	// 		const uri = vs.Uri.parse("file:///home/benjamin/university/2019-S1/2300/ARMv7-M-architecture-reference-manual.pdf");
+	// 		return new vs.Location(uri, new vs.Position(0,0));
+	// 	}
+	// });
+
 	vs.commands.registerCommand("discotools.openManualPage", (page: number | undefined) => {
 		if (page === undefined) {
 			vs.window.showInformationMessage(`No page to open`);
@@ -142,8 +159,6 @@ export function activate(context: vs.ExtensionContext) {
 			vs.window.showInformationMessage(`Cannot open ${manPath} in ${viewer}`);
 			return;
 		}
-
-		vs.window.showInformationMessage(`Opening page ${page}`);
 
 		let cmd: string;
 		switch (viewer) {
