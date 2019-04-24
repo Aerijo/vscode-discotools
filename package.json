@@ -52,7 +52,13 @@
 					"default": "none"
 				}
 			}
-		}
+		},
+		"snippets": [
+			{
+			  "language": "arm",
+			  "path": "./snippets/arm.json"
+			}
+		]
 	},
 	"dependencies": {
 		"disco-disassembler": "0.0.1"

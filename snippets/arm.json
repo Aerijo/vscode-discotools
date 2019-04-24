@@ -1,0 +1,12 @@
+{
+    "function": {
+        "prefix": "func",
+        "body": [
+            ".type ${1:name}, %function",
+            "${1:name}:",
+            "\t${0:nop}",
+            ".size ${1:name}, . - ${1:name}"
+        ],
+        "description": "Assembly function template"
+    }
+}
