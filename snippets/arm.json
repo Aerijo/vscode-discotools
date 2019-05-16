@@ -5,8 +5,21 @@
             ".type ${1:name}, %function",
             "${1:name}:",
             "\t${0:nop}",
+            "\tbx lr",
             ".size ${1:name}, . - ${1:name}"
         ],
-        "description": "Assembly function template"
+        "description": "Function template"
+    },
+    "global_function": {
+        "prefix": "gfunc",
+        "body": [
+            ".global ${1:name}",
+            ".type ${1:name}, %function",
+            "${1:name}:",
+            "\t${0:nop}",
+            "\tbx lr",
+            ".size ${1:name}, . - ${1:name}"
+        ],
+        "description": "Global function template"
     }
 }
