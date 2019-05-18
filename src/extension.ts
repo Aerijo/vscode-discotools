@@ -4,13 +4,13 @@ import * as dd from "disco-disassembler";
 import { Encoding } from "disco-disassembler/dist/src/instructions/encodings";
 
 import * as cp from "child_process";
-import { print } from "util";
 
 const EXPECTED_MIN_LINE_LENGTH = 58; // last line may have fewer bytes, so the ASCII stops sooner
 
 export function isStartWideInstruction(hword: number) {
 	return (hword & 0xE000) === 0xE000 && (hword & 0x1800) > 0; // first 3 bits are high && 4th or 5th is high
 }
+
 
 enum Type {
 	HWORD,
@@ -19,6 +19,7 @@ enum Type {
 	CUTOFF_HWORD,
 }
 
+
 type HoverInfo = {
 	type: Type;
 	range: vs.Range;
@@ -26,13 +27,11 @@ type HoverInfo = {
 	startAddress: string;
 };
 
+
 function isValidHword (byte: string) {
 	return /[0-9A-F]{4}/.test(byte);
 }
 
-function lineIndexToAddressIndex (alignedIndex: number): string {
-	return ((alignedIndex - 10) / 3).toString(16).toUpperCase();
-}
 
 function getHoverContext(position: vs.Position, document: vs.TextDocument): HoverInfo | null {
 	if (!ByteIterator.positionIsByte(position)) { return null; }
@@ -128,22 +127,6 @@ export function activate(context: vs.ExtensionContext) {
 		}
 	});
 
-	// vs.languages.registerDefinitionProvider("arm", {
-	// 	provideDefinition(document, position, token) {
-
-	// 		const range = document.getWordRangeAtPosition(position);
-
-	// 		console.log(range);
-
-	// 		const word = document.getText(range);
-
-	// 		console.log(word);
-			
-	// 		const uri = vs.Uri.parse("file:///home/benjamin/university/2019-S1/2300/ARMv7-M-architecture-reference-manual.pdf");
-	// 		return new vs.Location(uri, new vs.Position(0,0));
-	// 	}
-	// });
-
 	vs.commands.registerCommand("discotools.openManualPage", (page: number | undefined) => {
 		if (page === undefined) {
 			vs.window.showInformationMessage(`No page to open`);
@@ -173,6 +156,78 @@ export function activate(context: vs.ExtensionContext) {
 	vs.commands.registerCommand("discotools.logEncodingDetails", (bits: number) => {
 		vs.window.showInformationMessage(`0b${bits.toString(2)}\n\n\n\n0x${bits.toString(16)}`);
 	});
+
+	vs.commands.registerTextEditorCommand("discotools.toggleDocComment", (editor: vs.TextEditor, edit: vs.TextEditorEdit) => {
+		const selection = editor.selection;
+		const document = editor.document;
+
+		const activeLine = selection.active.line;
+		const startLine = document.lineAt(activeLine).text;
+		if (/\s*(@|\/\/)/.test(startLine)) {
+			// @ lines -> /** */
+			let multiline = false;
+			if (activeLine > 0 && /\s*(@|\/\/)/.test(document.lineAt(activeLine - 1).text)) {
+				multiline = true;
+			} else if (activeLine < document.lineCount - 1 && /\s*(@|\/\/)/.test(document.lineAt(activeLine + 1).text)) {
+				multiline = true;
+			}
+			makeDocComment(edit, document, selection, multiline);
+		} else if (/\s*\*/.test(startLine)) {
+			// /** */ -> @ lines (TODO)
+		} else {
+			// No comment -> /** */ on selected lines (TODO)
+		}
+	});
 }
+
+
+function makeDocComment(edit: vs.TextEditorEdit, document: vs.TextDocument, selection: vs.Selection, multiline: boolean): void {
+	if (!multiline) {
+		const i = selection.active.line;
+		const line = document.lineAt(i).text;
+		const match = /(\s*)(?:@|\/\/)/.exec(line);
+		if (!match) { return; }
+		const replacement = match[1] + "/**"; 
+		edit.replace(new vs.Range(i, 0, i, match[0].length), replacement);
+		edit.insert(new vs.Position(i, line.length), " */");
+		return;
+	}
+
+	let setStart = false;
+	let setEnd = false;
+
+	for (let i = selection.start.line; i > 0; i--) {
+		const line = document.lineAt(i).text;
+		const match = /(\s*)(?:@|\/\/)/.exec(line);
+		if (!match) {
+			edit.insert(new vs.Position(i, line.length), "\n/**"); // TODO: Indent with rest of code
+			setStart = true;
+			break;
+		}
+		const replacement = match[1] + " *"; 
+		edit.replace(new vs.Range(i, 0, i, match[0].length), replacement);
+	}
+
+	if (!setStart) {
+		edit.insert(new vs.Position(0, 0), "/**\n");
+	}
+
+	for (let i = selection.start.line + 1; i < document.lineCount; i++) {
+		const line = document.lineAt(i).text;
+		const match = /(\s*)(?:@|\/\/)/.exec(line);
+		if (!match) { 
+			edit.insert(new vs.Position(i, line.length), " */\n");
+			setEnd = true;
+			break;
+		}
+		const replacement = match[1] + " *"; 
+		edit.replace(new vs.Range(i, 0, i, match[0].length), replacement);
+	}
+
+	if (!setEnd) {
+		edit.insert(new vs.Position(document.lineCount, 0), "\n */");
+	}
+}
+
 
 export function deactivate() { }

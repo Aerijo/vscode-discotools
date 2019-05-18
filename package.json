@@ -58,6 +58,23 @@
 				"language": "arm",
 				"path": "./snippets/arm.json"
 			}
+		],
+		"commands": [{
+            "command": "discotools.toggleDocComment",
+            "title": "Toggle Doc Comment"
+		}],
+		"languages": [
+			{
+			  "id": "ARM7 Unified",
+			  "extensions": [".S"]
+			}
+		],
+		"grammars": [
+			{
+				"language": "arm",
+				"scopeName": "source.arm",
+				"path": "./grammars/arm.json"
+			}
 		]
 	},
 	"dependencies": {

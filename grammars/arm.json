@@ -1,0 +1,364 @@
+{
+    "scopeName": "source.arm",
+    "patterns": [
+        {
+            "include": "#comments"
+        },
+        {
+            "include": "#separator"
+        },
+        {
+            "include": "#label"
+        },
+        {
+            "include": "#number"
+        },
+        {
+            "include": "#float"
+        },
+        {
+            "include": "#register"
+        },
+        {
+            "include": "#macro"
+        },
+        {
+            "include": "#directive"
+        },
+        {
+            "include": "#shifts"
+        },
+        {
+            "include": "#character"
+        },
+        {
+            "include": "#string"
+        },
+        {
+            "include": "#types"
+        },
+        {
+            "include": "#symbol"
+        }
+    ],
+    "repository": {
+        "comments": {
+            "patterns": [
+                {
+                    "name": "comment.line.character.at-sign.arm",
+                    "match": "@.*"
+                },
+                {
+                    "name": "comment.line.double-slash.arm",
+                    "match": "//.*"
+                },
+                {
+                    "name": "comment.line.number-sign.arm",
+                    "match": "^\\s*#.*"
+                },
+                {
+                    "name": "comment.block.documentation.arm",
+                    "begin": "/\\*\\*",
+                    "beginCaptures": {"0": {"name": "comment.begin.documentation.arm"}},
+                    "end": "\\*/",
+                    "endCaptures": {"0": {"name": "comment.end.documentation.arm"}},
+                    "patterns": [{"include": "#doctags"}]
+                },
+                {
+                    "name": "comment.block.arm",
+                    "begin": "/\\*",
+                    "beginCaptures": {"0": {"name": "comment.begin.arm"}},
+                    "end": "\\*/",
+                    "endCaptures": {"0": {"name": "comment.end.arm"}}
+                }
+            ]
+        },
+        "separator": {
+            "name": "punctuation.separator.arm",
+            "match": ";"
+        },
+        "label": {
+            "patterns": [
+                {
+                    "name": "variable.label.temp.arm",
+                    "match": "\\b\\d+:"
+                },
+                {
+                    "name": "variable.label.arm",
+                    "match": "\\b([a-zA-Z_\\.][a-zA-Z0-9_\\.\\$]*):"
+                },
+                {
+                    "match": "(\"(?>(\\\\.)|[^\"])*?\"):",
+                    "captures": {
+                        "1": {"name": "string.label.arm"}
+                    }
+                }
+            ]
+        },
+        "character": {
+            "name": "string.quoted.single.arm",
+            "match": "'(?:(\\\\.)|.)'?",
+            "captures": {
+                "1": {"name": "constant.character.escape.arm"}
+            }
+        },
+        "string": {
+            "name": "string.quoted.double.arm",
+            "begin": "\"",
+            "end": "\"",
+            "patterns": [
+                {
+                    "name": "constant.character.escape.arm",
+                    "match": "\\\\."
+                }
+            ]
+        },
+        "symbol": {
+            "name": "meta.symbol.arm",
+            "match": "[a-zA-Z_\\.][a-zA-Z0-9_\\.\\$]*"
+        },
+        "number": {
+            "patterns": [
+                {
+                    "name": "constant.numeric.octal.arm",
+                    "match": "(#|\\$)?(0)[0-7]+\\b",
+                    "captures": {
+                        "1": {"name": "id.octal.arm"},
+                        "2": {"name": "prefix.octal.arm"}
+                    }
+                },
+                {
+                    "name": "constant.numeric.decimal.arm",
+                    "match": "(#|\\$)?(?:0|[1-9][0-9]*)\\b",
+                    "captures": {
+                        "1": {"name": "id.decimal.arm"}
+                    }
+                },
+                {
+                    "name": "constant.numeric.binary.arm",
+                    "match": "(#|\\$)?(0[bB])[01]+\\b",
+                    "captures": {
+                        "1": {"name": "id.binary.arm"},
+                        "2": {"name": "prefix.binary.arm"}
+                    }
+                },
+                {
+                    "name": "constant.numeric.hexadecimal.arm",
+                    "match": "(#|\\$)?(0[xX])[0-9a-fA-F]+\\b",
+                    "captures": {
+                        "1": {"name": "id.hexadecimal.arm"},
+                        "2": {"name": "prefix.hexadecimal.arm"}
+                    }
+                }
+            ]
+        },
+        "shifts": {
+            "name": "keyword.shift.arm",
+            "match": "\\b(asl|ASL|lsl|LSL|lsr|LSR|asr|ASR|ror|ROR|rrx|RRX)\\b"
+        },
+        "register": {
+            "patterns": [
+                {
+                    "comment": "Registers of the form x0--x15",
+                    "name": "storage.other.register.arm",
+                    "match": "%?\\b(?:[rRpPcCqQ]|cr|CR|mvf|MVF|mvd|MVD|mvfx|MVFX|mvdx|MVDX|wr|[wW]R)(?>1[0-5]?|[0-9])\\b"
+                },
+                {
+                    "comment": "Registers of the form x0--x31",
+                    "name": "storage.other.register.arm",
+                    "match": "%?\\b[sSdD](?>3[0-1]?|[1-2]?[0-9])\\b"
+                },
+                {
+                    "comment": "Registers of the form x0--x7",
+                    "name": "storage.other.register.arm",
+                    "match": "%?\\b[fF][0-7]\\b"
+                },
+                {
+                    "comment": "Registers of the form x0--x3",
+                    "name": "storage.other.register.arm",
+                    "match": "%?\\b(?:mvax|MVAX|wcgr|[wW]CGR)[0-3]\\b"
+                },
+                {
+                    "comment": "Registers of the form x (with some minor exceptions)",
+                    "name": "storage.other.register.named.arm",
+                    "match": "%?\\b(wr|WR|sb|SB|sl|SL|fp|FP|ip|IP|sp|SP|lr|LR|pc|PC|fpsid|FPSID|fpscr|FPSCR|fpexc|FPEXC|fpinst2?|FPINST2?|mvfr[0-2]|MVFR[0-2]|dspsc|DSPSC|wcid|[wW]CID|[wW]con|WCON|wc[as]sf|[wW]C[AS]SF|acc0|ACC0)\\b"
+                },
+                {
+                    "name": "storage.other.register.arm",
+                    "match": "%?\\b([aA][1-4]|[vV][1-8])\\b"
+                },
+                {
+                    "name": "storage.other.register.arm",
+                    "match": "%?\\b(?:[rR])(?:[8-9]|1[0-2])_(usr|fiq)\\b"
+                },
+                {
+                    "name": "storage.other.register.arm",
+                    "match": "%?\\b(?:sp|SP|lr|LR)_usr\\b"
+                },
+                {
+                    "name": "storage.other.register.arm",
+                    "match": "%?\\b(?:lr|LR|sp|SP|spsr|SPSR)_(?:fiq|irq|IRQ|svc|SVC|abt|ABT|und|UND|mon|MON)\\b"
+                },
+                {
+                    "name": "storage.other.register.arm",
+                    "match": "%?\\b(?:elr|ELR|sp|SP|spsr|SPSR)_hyp\\b"
+                }
+            ]
+        },
+        "directive": {
+            "patterns": [
+                {
+                    "name": "keyword.directive.if.$1.arm",
+                    "match": "\\.(if(?:b|c|def|eq|eqs|ge|gt|le|lt|nb|nc|ndef|ne|nes|notdef)?|else(?:c|if)?|end(?:c|if))\\b"
+                },
+                {
+                    "name": "keyword.directive.float.$1.arm",
+                    "match": "\\.(float|single|double|dc\\.[dsx]|extend|ldouble|packed)\\b"
+                },
+                {
+                    "name": "keyword.directive.align.$1.arm",
+                    "match": "\\.(align|(?:b|p2)align[wl]?)\\b"
+                },
+                {
+                    "name": "keyword.directive.assign.$1.arm",
+                    "match": "\\.(eq(?:u|v|uiv)|set)\\b"
+                },
+                {
+                    "name": "keyword.directive.error.$1.arm",
+                    "match": "\\.(err(?:or)|fail|warning)\\b"
+                },
+                {
+                    "name": "keyword.directive.string.$1.arm",
+                    "match": "\\.(asci[iz]|string(?:8|16|32|64)?)\\b"
+                },
+                {
+                    "name": "keyword.directive.function.$1.arm",
+                    "match": "\\.(func|endfunc)\\b"
+                },
+                {
+                    "name": "keyword.directive.repeat.$1.arm",
+                    "match": "\\.(rept?|endr)\\b"
+                },
+                {
+                    "name": "keyword.directive.global.$1.arm",
+                    "match": "\\.(globa?l|xdef)\\b"
+                },
+                {
+                    "name": "keyword.directive.constant.$1.arm",
+                    "match": "\\.(h?word|int|long|octa|short|2byte|4byte|8byte|inst(?:\\.[nw])?)\\b"
+                },
+                {
+                    "name": "keyword.directive.gnu.arm",
+                    "match": "this_(?:gcc|GCC)_requires_the_(?:gnu|GNU)_assembler"
+                },
+                {
+                    "comment": "ARM / Thumb defined",
+                    "name": "keyword.directive.$1.arm",
+                    "match": "\\.(req|dn|qn|unreq|bss|arm|thumb|code|force_thumb|thumb_func|thumb_set|even|ltorg|pool|syntax|cpu|arch|object_arch|fpu|arch_extension|rel31|fnstart|fnend|cantunwind|personality|personalityindex|handlerdata|save|vsave|movsp|pad|setfp|unwind_raw|eabi_attribute|tlsdescseq|ref|def|asmfunc|endasmfunc)\\b"
+                },
+                {
+                    "name": "keyword.directive.$1.arm",
+                    "match": "\\.(abort|(?:no)?altmacro|data|text|eject|end|byte|comm(?:on(?:\\.s)?)?|dc(?:\\.[ablw])?|dcb(?:\\.[bdlswx])?|ds(?:\\.[bdlpswx])?|debug|end[mr]|exitm|extern|appfile|appline|file|fill|format|incbin|include|irp|irep|irpc|lcomm|lflags|linefile|linkonce|list|llen|lsym|mexit|\\.?mri|name|noformat|nolist|nopage|nops|offset|org|page|plen|print|psize|purgem|quad|reloc|rva|sbttl|space|skip|sleb128|spc|stab[dns]|struct|title|ttl|uleb128|xcom|xref|weak(?:ref)?|zero|ident|local|previous|sect(?:ion)?(?:\\.s)?|pushsection|popsection|size|type|version|internal|hidden|protected|line|symver|subsection|vtable_(?:inherit|entry)|gnu_attribute|loc|loc_mark_labels)\\b"
+                },
+                {
+                    "name": "keyword.directive.other.$1.arm",
+                    "match": "\\.([a-zA-Z0-9_\\.]*)"
+                }
+            ]
+        },
+        "macro": {
+            "comment": "The syntax inside a macro definition is intentionally reduced, to allow better detection of parameters and prevent leaks",
+            "name": "meta.macro.arm",
+            "begin": "(\\.macro)\\s+([a-zA-Z_$\\.][a-zA-Z0-9_$\\.]*)",
+            "beginCaptures": {
+                "1": {"name": "keyword.directive.macro.begin.arm"},
+                "2": {"name": "variable.macro.arm"}
+            },
+            "end": ".endm\\b",
+            "endCaptures": {
+                "0": {"name": "keyword.directive.macro.end.arm"}
+            },
+            "patterns": [
+                {
+                    "name": "constant.macro.break.arm",
+                    "match": "\\\\\\(\\)"
+                },
+                {
+                    "name": "constant.macro.counter.arm",
+                    "match": "\\\\@"
+                },
+                {
+                    "name": "storage.macro.param.arm",
+                    "match": "\\\\\\w+"
+                },
+                {
+                    "include": "#comments"
+                },
+                {
+                    "include": "#register"
+                },
+                {
+                    "include": "#number"
+                },
+                {
+                    "include": "#float"
+                },
+                {
+                    "include": "#label"
+                },
+                {
+                    "include": "#shifts"
+                }
+            ]
+        },
+        "float": {
+            "patterns": [
+                {
+                    "name": "constant.numeric.float.arm",
+                    "match": "0[a-zA-Z]:[0-9a-fA-F]+\\b"
+                },
+                {
+                    "name": "constant.numeric.float.arm",
+                    "match": "(?:0[a-zA-Z])?[+\\-]?([0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+\\-]?[0-9]+)?\\b"
+                },
+                {
+                    "name": "constant.numeric.float.arm",
+                    "match": "\\b(?i:nan|inf(?>inity)?)\\b"
+                }
+            ]
+        },
+        "types": {
+            "name": "storage.type.$1.arm",
+            "match": "[%#](function|object|tls_object|notype|common|gnu_indirect_function|gnu_unique_object)"
+        },
+        "doctags": {
+            "patterns": [
+                {
+                    "name": "constant.doc.value.arm",
+                    "match": "{[\\w$#%&^*]*}"
+                },
+                {
+                    "match": "(@(params?))\\s+([\\w,\\s]+)\\s*([\\-=:])?",
+                    "captures": {
+                        "1": {"name": "keyword.doc.param.arm"},
+                        "3": {"name": "variable.doc.param.arm"},
+                        "4": {"name": "punctuation.doc.sep.arm"}
+                    }
+                },
+                {
+                    "comment": "Allow `u` to be optional so `retrn` is same length as `param`",
+                    "match": "(@(retu?rns?|retval))\\s+([\\w,\\s]+)?\\s*([\\-=:])?",
+                    "captures": {
+                        "1": {"name": "keyword.doc.return.arm"},
+                        "3": {"name": "variable.doc.return.arm"},
+                        "4": {"name": "punctuation.doc.sep.arm"}
+                    }
+                },
+                {
+                    "name": "keyword.doc.$1.arm",
+                    "match": "@(\\w+)"
+                }
+            ]
+        }
+    }
+}
