@@ -216,7 +216,7 @@ function makeDocComment(edit: vs.TextEditorEdit, document: vs.TextDocument, sele
 		const line = document.lineAt(i).text;
 		const match = /(\s*)(?:@|\/\/)/.exec(line);
 		if (!match) { 
-			edit.insert(new vs.Position(i, line.length), " */\n");
+			edit.insert(new vs.Position(i, 0), " */\n");
 			setEnd = true;
 			break;
 		}
