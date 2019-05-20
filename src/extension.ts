@@ -163,7 +163,9 @@ export function activate(context: vs.ExtensionContext) {
 
 		const activeLine = selection.active.line;
 		const startLine = document.lineAt(activeLine).text;
-		if (/\s*(@|\/\/)/.test(startLine)) {
+		const inlineMatch = /(\s*)(?:@|\/\/)/.exec(startLine);
+		if (inlineMatch) {
+			const indent = inlineMatch[1];
 			// @ lines -> /** */
 			let multiline = false;
 			if (activeLine > 0 && /\s*(@|\/\/)/.test(document.lineAt(activeLine - 1).text)) {
@@ -171,7 +173,7 @@ export function activate(context: vs.ExtensionContext) {
 			} else if (activeLine < document.lineCount - 1 && /\s*(@|\/\/)/.test(document.lineAt(activeLine + 1).text)) {
 				multiline = true;
 			}
-			makeDocComment(edit, document, selection, multiline);
+			makeDocComment(edit, document, selection, multiline, indent);
 		} else if (/\s*\*/.test(startLine)) {
 			// /** */ -> @ lines (TODO)
 		} else {
@@ -181,13 +183,13 @@ export function activate(context: vs.ExtensionContext) {
 }
 
 
-function makeDocComment(edit: vs.TextEditorEdit, document: vs.TextDocument, selection: vs.Selection, multiline: boolean): void {
+function makeDocComment(edit: vs.TextEditorEdit, document: vs.TextDocument, selection: vs.Selection, multiline: boolean, indent: string): void {
 	if (!multiline) {
 		const i = selection.active.line;
 		const line = document.lineAt(i).text;
 		const match = /(\s*)(?:@|\/\/)/.exec(line);
 		if (!match) { return; }
-		const replacement = match[1] + "/**"; 
+		const replacement = indent + "/**"; 
 		edit.replace(new vs.Range(i, 0, i, match[0].length), replacement);
 		edit.insert(new vs.Position(i, line.length), " */");
 		return;
@@ -198,34 +200,32 @@ function makeDocComment(edit: vs.TextEditorEdit, document: vs.TextDocument, sele
 
 	for (let i = selection.start.line; i > 0; i--) {
 		const line = document.lineAt(i).text;
-		const match = /(\s*)(?:@|\/\/)/.exec(line);
+		const match = /\s*(?:@|\/\/)/.exec(line);
 		if (!match) {
-			edit.insert(new vs.Position(i, line.length), "\n/**"); // TODO: Indent with rest of code
+			edit.insert(new vs.Position(i, line.length), "\n" + indent + "/**"); // TODO: Indent with rest of code
 			setStart = true;
 			break;
 		}
-		const replacement = match[1] + " *"; 
-		edit.replace(new vs.Range(i, 0, i, match[0].length), replacement);
+		edit.replace(new vs.Range(i, 0, i, match[0].length), indent + " *");
 	}
 
 	if (!setStart) {
-		edit.insert(new vs.Position(0, 0), "/**\n");
+		edit.insert(new vs.Position(0, 0), indent + "/**\n");
 	}
 
 	for (let i = selection.start.line + 1; i < document.lineCount; i++) {
 		const line = document.lineAt(i).text;
-		const match = /(\s*)(?:@|\/\/)/.exec(line);
+		const match = /\s*(?:@|\/\/)/.exec(line);
 		if (!match) { 
-			edit.insert(new vs.Position(i, 0), " */\n");
+			edit.insert(new vs.Position(i, 0), indent + " */\n");
 			setEnd = true;
 			break;
 		}
-		const replacement = match[1] + " *"; 
-		edit.replace(new vs.Range(i, 0, i, match[0].length), replacement);
+		edit.replace(new vs.Range(i, 0, i, match[0].length), indent + " *");
 	}
 
 	if (!setEnd) {
-		edit.insert(new vs.Position(document.lineCount, 0), "\n */");
+		edit.insert(new vs.Position(document.lineCount, 0), "\n" + indent + " */");
 	}
 }
 
