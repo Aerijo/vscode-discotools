@@ -26,9 +26,6 @@
             "include": "#directive"
         },
         {
-            "include": "#shifts"
-        },
-        {
             "include": "#character"
         },
         {
@@ -153,8 +150,9 @@
             ]
         },
         "shifts": {
+            "comment": "These should not be used until the context can't contain the actual instructions of the same name.",
             "name": "keyword.shift.arm",
-            "match": "\\b(asl|ASL|lsl|LSL|lsr|LSR|asr|ASR|ror|ROR|rrx|RRX)\\b"
+            "match": "\\b(ASL|LSL|LSR|ASR|ROR|RRX)\\b"
         },
         "register": {
             "patterns": [
@@ -269,7 +267,7 @@
         "macro": {
             "comment": "The syntax inside a macro definition is intentionally reduced, to allow better detection of parameters and prevent leaks",
             "name": "meta.macro.arm",
-            "begin": "(\\.macro)\\s+([a-zA-Z_$\\.][a-zA-Z0-9_$\\.]*)",
+            "begin": "(\\.macro)\\s+([a-zA-Z_$\\.][a-zA-Z0-9_$\\.]*).*$",
             "beginCaptures": {
                 "1": {"name": "keyword.directive.macro.begin.arm"},
                 "2": {"name": "variable.macro.arm"}
@@ -305,9 +303,6 @@
                 },
                 {
                     "include": "#label"
-                },
-                {
-                    "include": "#shifts"
                 }
             ]
         },
