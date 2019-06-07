@@ -1,3 +1,5 @@
+.syntax unified
+
 /**
  * @author   Benjamin Gray (u6677379)
  * @license  MIT
@@ -8,6 +10,8 @@
  *   The hardware facing end of this LCD library is largely a translation of
  *   https://github.com/frisnit/STM32L476-radar/blob/master/software/STM32-radar/STM32L476G-Discovery/stm32l476g_discovery_glass_lcd.c
  *   from C to Assembly.
+ *
+ * @pins A6--A10, A15, B0, B1, B4, B5, B9, B12--B15, C3--C8, D8--D15
  *
  * @interface
  * - `lcd_init`: call this once at the start of your program, like with the audio init function.
@@ -44,8 +48,6 @@
  */
 
 
-.syntax unified
-
 @@@@@@@@@@@@@@@@@@@@
 @@ User constants @@
 @@@@@@@@@@@@@@@@@@@@
@@ -58,8 +60,8 @@
 @@@@@@@@@@@@@@@@@
 
 /** These will be in register r1, and hopefully be displayed on the LCD itself too */
-.eqv LCD_ERROR_DISPLAY_POSITION, 1 @ position is not in range 0--5
-.eqv LCD_ERROR_ASCII_DECODE, 2 @ could not decode into displayable ASCII
+.equiv LCD_ERROR_DISPLAY_POSITION, 1 @ position is not in range 0--5
+.equiv LCD_ERROR_ASCII_DECODE, 2 @ could not decode into displayable ASCII
 
 /*
 If you see an unlisted error, either the board has grown self aware (unlikely) or
@@ -67,9 +69,9 @@ I forgot to set an error code (likely).
 */
 
 
-@@@@@@@@@@@@@
-@@ Library @@
-@@@@@@@@@@@@@
+@@@@@@@@@@@@
+@@ Public @@
+@@@@@@@@@@@@
 
 /**
  * Initialises everything necessary to use the LCD.
@@ -81,6 +83,7 @@ I forgot to set an error code (likely).
  * @param {null}
  * @return {null}
  */
+.global lcd_init
 .type lcd_init, %function
 lcd_init:
     push {lr}
@@ -130,10 +133,7 @@ lcd_init:
     /** #4 Enable LCD GPIO Clocks */
     ldr r0, =RCC
     ldr r1, [r0, RCC_AHB2ENR] @ NOTE: Original enables one at a time, with delay
-    orr r1, 1 << RCC_AHB2ENR_GPIOAEN
-    orr r1, 1 << RCC_AHB2ENR_GPIOBEN
-    orr r1, 1 << RCC_AHB2ENR_GPIOCEN
-    orr r1, 1 << RCC_AHB2ENR_GPIODEN
+    orr r1, (1 << RCC_AHB2ENR_GPIOAEN | 1 << RCC_AHB2ENR_GPIOBEN | 1 << RCC_AHB2ENR_GPIOCEN | 1 << RCC_AHB2ENR_GPIODEN)
     str r1, [r0, RCC_AHB2ENR]
     @ bl delay
 
@@ -299,7 +299,6 @@ lcd_init:
     str r1, [r0, LCD_SR]
 
     /** #10 Set the Prescaler, Divider, Blink Mode, and Blink Frequency */
-    ldr r0, =LCD
     ldr r1, [r0, LCD_FCR]
     ldr r2, =0b11111111111111111111110001
     bic r1, r2
@@ -318,15 +317,13 @@ lcd_init:
     str r1, [r0, LCD_CR]
 
     /** #12 Enable the peripheral */
-    @ ldr r0, =LCD
     ldr r1, [r0, LCD_CR]
     orr r1, 1 << LCD_CR_LCDEN
     str r1, [r0, LCD_CR]
     bl wait_for_LCD_SR_ENS
     bl wait_for_LCD_SR_RDY
 
-    pop {lr}
-    bx lr
+    pop {pc}
 .size lcd_init, . - lcd_init
 
 
@@ -336,40 +333,40 @@ lcd_init:
  * the first position to display an `A`
  *
  * Note the display is not updated yet; you need to call
- * {lcd_update_display} to see what has been writter.
+ * {lcd_update_display} to display what has been written.
  *
- * @param
- *   r0: 16 bits encoded output (e.g., "A" = 0xFE00)
- *   r1: position [0..5] (left to right)
+ * @param r0: 16 bits encoded output (e.g., 'A' = 0xFE00)
+ * @param r1: position [0..5] (left to right)
  * @return {null}
  */
+.global lcd_write_raw
 .type lcd_write_raw, %function
 lcd_write_raw:
     push {r4, lr}
-
     push {r0, r1}
-    bl wait_for_reset_LCD_SR_UDR
-    pop {r0, r1}
 
-    ldr r3, =LCD
-
-    cmp r1, 0
-    beq lcd_write_pos_zero
-    cmp r1, 1
-    beq lcd_write_pos_one
-    cmp r1, 2
-    beq lcd_write_pos_two
-    cmp r1, 3
-    beq lcd_write_pos_three
-    cmp r1, 4
-    beq lcd_write_pos_four
     cmp r1, 5
-    beq lcd_write_pos_five
+    bls 1f
 
     mov r1, LCD_ERROR_DISPLAY_POSITION
-    b lcd_error
+    bl lcd_error
 
-    lcd_write_pos_zero:
+    1:
+    bl wait_for_reset_LCD_SR_UDR
+
+    pop {r0, r1}
+    ldr r3, =LCD
+
+    tbh [pc, r1, LSL 1]
+    1:
+    .hword (0f - 1b) / 2
+    .hword (1f - 1b) / 2
+    .hword (2f - 1b) / 2
+    .hword (3f - 1b) / 2
+    .hword (4f - 1b) / 2
+    .hword (5f - 1b) / 2
+
+    0:
         ldr r4, =LCD_DIGIT1_SEG_MASK
 
         and r2, r0, 0x1000
@@ -385,7 +382,7 @@ lcd_write_raw:
         lsr r2, 12 @ LCD_SEG23_SHIFT
         orr r1, r2
 
-        ldr r2, [r3, LCD_DIGIT1_COM0] @ r3 == LCD
+        ldr r2, [r3, LCD_DIGIT1_COM0]
         and r2, r4
         orr r2, r1
         str r2, [r3, LCD_DIGIT1_COM0]
@@ -444,9 +441,9 @@ lcd_write_raw:
         orr r2, r1
         str r2, [r3, LCD_DIGIT1_COM3]
 
-    b lcd_write_end
+    b 900f
 
-    lcd_write_pos_one:
+    1:
         ldr r4, =LCD_DIGIT2_SEG_MASK
 
         and r2, r0, 0x1000
@@ -521,9 +518,9 @@ lcd_write_raw:
         orr r2, r1
         str r2, [r3, LCD_DIGIT1_COM3]
 
-    b lcd_write_end
+    b 900f
 
-    lcd_write_pos_two:
+    2:
         ldr r4, =LCD_DIGIT3_SEG_MASK
 
         and r2, r0, 0x1000
@@ -598,10 +595,9 @@ lcd_write_raw:
         orr r2, r1
         str r2, [r3, LCD_DIGIT1_COM3]
 
-    b lcd_write_end
+    b 900f
 
-    lcd_write_pos_three:
-
+    3:
         and r2, r0, 0x1000
         lsl r2, 19 @ LSD_SEG6 == 31
         mov r1, r2
@@ -706,10 +702,9 @@ lcd_write_raw:
         orr r2, r1
         str r2, [r3, LCD_DIGIT4_COM3_1]
 
-    b lcd_write_end
+    b 900f
 
-    lcd_write_pos_four:
-
+    4:
         and r2, r0, 0x2000
         lsl r2, 12 @ LCD_SEG9 == 25
         mov r1, r2
@@ -814,10 +809,9 @@ lcd_write_raw:
         orr r2, r1
         str r2, [r3, LCD_DIGIT4_COM3_1]
 
-    b lcd_write_end
+    b 900f
 
-    lcd_write_pos_five:
-
+    5:
         ldr r4, =LCD_DIGIT6_SEG_MASK
 
         and r2, r0, 0x1000
@@ -892,9 +886,8 @@ lcd_write_raw:
         orr r2, r1
         str r2, [r3, LCD_DIGIT1_COM3]
 
-    lcd_write_end:
-    pop {r4, lr}
-    bx lr
+    900:
+    pop {r4, pc}
 .size lcd_write_raw, . - lcd_write_raw
 
 
@@ -907,10 +900,11 @@ lcd_write_raw:
  * Optionally errors if setting colon / period on the last two
  * positions, which will set the bars instead (usually unintended)
  *
- * @param
- *   r0: ASCII char
- *   r1: display position
+ * @param r0: ASCII char
+ * @param r1: display position
+ * @return {null}
  */
+.global lcd_write_char
 .type lcd_write_char, %function
 lcd_write_char:
     push {lr}
@@ -920,89 +914,87 @@ lcd_write_char:
     push {r1}
     bl lcd_decode_ascii
     pop {r1}
+
     bl lcd_write_raw
-    pop {lr}
-    bx lr
+
+    pop {pc}
 .size lcd_write_char, . - lcd_write_char
 
 
 /**
  * Displays 6 characters, or fewer if null terminated
  *
- * @param:
- *   r0: pointer to start of ASCII string (byte sized characters)
- *   r1: start position on LCD display
- *
- * @return: {null}
+ * @param r0: pointer to ASCII string
+ * @param r1: start position on LCD display
+ * @return {null}
  */
+.global lcd_write_string
 .type lcd_write_string, %function
 lcd_write_string:
-    push {r4, r5, r6, lr}
+    push {r4-r6, lr}
 
     mov r4, r0
     mov r5, r1
 
-    lcd_write_string_loop:
+    @ We will load in 4 bytes at a time, even if we don't use them all
+    ldr r6, [r4], #4
+    ands r0, r6, 0xFF
+    beq 900f @ is null char
+    mov r1, r5
+    bl lcd_write_char
+
+    add r5, 1
+    cmp r5, 6
+    beq 900f
+
+    lsr r6, 8
+    ands r0, r6, 0xFF
+    beq 900f
+    mov r1, r5
+    bl lcd_write_char
+
+    add r5, 1
+    cmp r5, 6
+    beq 900f
+
+    lsr r6, 8
+    ands r0, r6, 0xFF
+    beq 900f
+    mov r1, r5
+    bl lcd_write_char
+
+    add r5, 1
+    cmp r5, 6
+    beq 900f
+
+    lsr r6, 8
+    ands r0, r6, 0xFF
+    beq 900f
+    mov r1, r5
+    bl lcd_write_char
+
+    add r5, 1
+    cmp r5, 6
+    beq 900f
 
     ldr r6, [r4], #4
     ands r0, r6, 0xFF
-    beq lcd_write_string_end @ is null char
+    beq 900f
     mov r1, r5
     bl lcd_write_char
 
     add r5, 1
     cmp r5, 6
-    beq lcd_write_string_end
+    beq 900f
 
     lsr r6, 8
     ands r0, r6, 0xFF
-    beq lcd_write_string_end
+    beq 900f
     mov r1, r5
     bl lcd_write_char
 
-    add r5, 1
-    cmp r5, 6
-    beq lcd_write_string_end
-
-    lsr r6, 8
-    ands r0, r6, 0xFF
-    beq lcd_write_string_end
-    mov r1, r5
-    bl lcd_write_char
-
-    add r5, 1
-    cmp r5, 6
-    beq lcd_write_string_end
-
-    lsr r6, 8
-    ands r0, r6, 0xFF
-    beq lcd_write_string_end
-    mov r1, r5
-    bl lcd_write_char
-
-    add r5, 1
-    cmp r5, 6
-    beq lcd_write_string_end
-
-    ldr r6, [r4], #4
-    ands r0, r6, 0xFF
-    beq lcd_write_string_end
-    mov r1, r5
-    bl lcd_write_char
-
-    add r5, 1
-    cmp r5, 6
-    beq lcd_write_string_end
-
-    lsr r6, 8
-    ands r0, r6, 0xFF
-    beq lcd_write_string_end
-    mov r1, r5
-    bl lcd_write_char
-
-    lcd_write_string_end:
-    pop {r4, r5, r6, lr}
-    bx lr
+    900:
+    pop {r4-r6, pc}
 .size lcd_write_string, . - lcd_write_string
 
 
@@ -1010,58 +1002,51 @@ lcd_write_string:
  * Displays a null terminated string by scrolling across the display
  * Will only scroll once, and is blocking until the action finishes.
  *
- * @param:
- *   r0: pointer to start of ASCII string (byte sized characters)
- *   r1: number of repetitions (at least one will play)
- *   r2: scroll speed (default if 0)
- *
- * @return: {null}
+ * @param r0: pointer to ASCII string
+ * @param r1: number of repetitions (at least one will play)
+ * @param r2: scroll speed (default if 0)
+ * @return {null}
  */
+.global lcd_write_scroll
 .type lcd_write_scroll, %function
 lcd_write_scroll:
-    push {r4, r5, r6, r7, r8, lr}
-    sub r1, 1
+    push {r4-r8, lr}
+    subs r1, 1
 
     mov r6, r0
     mov r7, r0
 
     mov r4, r1
-    mov r5, r2
-    cmp r5, 0
+    movs r5, r2
     it eq
     ldreq r5, =DEFAULT_SCROLL_SPEED
 
-    lcd_write_scroll_loop_repeat:
-    mov r8, 5
+    0:
+    movs r8, 5
 
-    lcd_write_scroll_loop_cycle:
+    1:
     bl lcd_clear
     mov r0, r6
     mov r1, r8
     bl lcd_write_string
     bl lcd_update_display
 
-
     mov r0, r5
     bl var_delay
 
     subs r8, 1
-    bpl lcd_write_scroll_loop_cycle
-    mov r8, 0
+    bpl 1b
+    movs r8, 0
 
-    inc_position:
-    ldrb r0, [r6]
+    ldrb r0, [r6], 1
     cmp r0, 0
+    bne 1b
 
-    add r6, 1
-    bne lcd_write_scroll_loop_cycle
-
-    subs r4, 1
     mov r6, r7
-    bpl lcd_write_scroll_loop_repeat
+    subs r4, 1
+    bpl 0b
 
-    pop {r4, r5, r6, r7, r8, lr}
-    bx lr
+    pop {r4-r8, pc}
 .size lcd_write_scroll, . - lcd_write_scroll
 
 
@@ -1072,12 +1057,14 @@ lcd_write_scroll:
  *
  * Only limited non alphanumeric characters are supported.
  *
- * @param:
- *   r0: ASCII value, plus 9th and 10th bits to set colon and period
+ * @param r0: ASCII value, plus 9th and 10th bits to set colon and period
+ * @return r0: decoded value, ready for {lcd_write_raw}
  */
+.global lcd_decode_ascii
 .type lcd_decode_ascii, %function
 lcd_decode_ascii:
-    mov r2, 0
+    @ Extract period & colon
+    movs r2, 0
     tst r0, 0x200
     it ne
     orrne r2, 0x0002
@@ -1085,169 +1072,43 @@ lcd_decode_ascii:
     it ne
     orrne r2, 0x0020
 
-    and r0, 0xFF @ isolate char
+    ands r0, 0xFF
 
-    @ TODO: convert to direct subtractions stored back to r0
-    cmp r0, 'A'
-    blt special_characters_num @ r0 < 'A'
-    cmp r0, 'Z'
-    ble ascii_capital_letter @ 'A' <= r0 <= 'Z'
-    cmp r0, 'a'
-    blt special_characters @ 'Z' < r0 < 'a'
-    cmp r0, 'z'
-    ble ascii_lower_letter @ 'a' <= r0 <= 'z'
-
-    special_characters:
-    cmp r0, ' '
-    beq lcd_decode_ascii_space
-    cmp r0, '.'
-    beq lcd_decode_ascii_period
-    cmp r0, ','
-    beq lcd_decode_ascii_comma
-    cmp r0, '\''
-    beq lcd_decode_ascii_squote
-    cmp r0, '$'
-    beq lcd_decode_ascii_dollar
-    cmp r0, '['
-    beq lcd_decode_ascii_obracket
-    cmp r0, ']'
-    beq lcd_decode_ascii_cbracket
-    cmp r0, '?'
-    beq lcd_decode_ascii_question
-    cmp r0, '^'
-    beq lcd_decode_ascii_caret
-    cmp r0, '`'
-    beq lcd_decode_ascii_backtick
-    cmp r0, '{'
-    beq lcd_decode_ascii_ocurl
-    cmp r0, '}'
-    beq lcd_decode_ascii_ccurl
-    cmp r0, '|'
-    beq lcd_decode_ascii_pipe
-    cmp r0, '*'
-    beq lcd_decode_ascii_star
-    cmp r0, '('
-    beq lcd_decode_ascii_oparen
-    cmp r0, ')'
-    beq lcd_decode_ascii_cparen
-    cmp r0, '-'
-    beq lcd_decode_ascii_minus
-    cmp r0, '+'
-    beq lcd_decode_ascii_plus
-    cmp r0, '/'
-    beq lcd_decode_ascii_fslash
-    cmp r0, '\\'
-    beq lcd_decode_ascii_bslash
-    cmp r0, '%'
-    beq lcd_decode_ascii_percent
+    @ Special case: Print full display
     cmp r0, 0xFF
-    beq lcd_decode_ascii_full
+    bne 1f
 
-    mov r1, LCD_ERROR_ASCII_DECODE @ If we get here, we couldn't decode the value
-    bl lcd_error
+    orr r0, 0xFFDD
+    bx lr
 
-    special_characters_num:
-    cmp r0, '0'
-    blt special_characters
-    cmp r0, '9'
-    bgt special_characters
-    sub r0, '0'
-    ldr r1, =ascii_numbers_map
-    lsl r0, 1
-    ldrh r0, [r1, r0]
-    b lcd_decode_ascii_end
+    1:
+    cmp r0, ' '
+    bmi 901f
 
-    lcd_decode_ascii_space:
-    ldr r0, =0x0000
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_period:
-    ldr r0, =0x0181
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_comma:
-    ldr r0, =0x0080
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_squote:
-    ldr r0, =0x0040
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_dollar:
-    ldr r0, =0xAF14
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_obracket:
-    ldr r0, =0x1D00
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_cbracket:
-    ldr r0, =0x4700
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_question:
-    ldr r0, =0xF400
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_caret:
-    ldr r0, =0x0081
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_backtick:
-    ldr r0, =0x0008
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_ocurl:
-    ldr r0, =0x8041
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_ccurl:
-    ldr r0, =0x2088
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_pipe:
-    ldr r0, =0x0014
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_star:
-    ldr r0, =0xA0DD
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_oparen:
-    ldr r0, =0x0041
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_cparen:
-    ldr r0, =0x0088
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_minus:
-    ldr r0, =0xA000
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_plus:
-    ldr r0, =0xA014
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_fslash:
-    ldr r0, =0x00C0
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_bslash:
-    ldr r0, =0x0009
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_percent:
-    ldr r0, =0xB300
-    b lcd_decode_ascii_end
-    lcd_decode_ascii_full:
-    ldr r0, =0xFFDD
-    b lcd_decode_ascii_end
+    cmp r0, ('~' + 1)
+    bpl 901f
 
-    ascii_capital_letter:
-    sub r0, 'A'
-    ldr r1, =ascii_capital_letters_map
-    lsl r0, 1
-    ldrh r0, [r1, r0]
-    b lcd_decode_ascii_end
-
-    ascii_lower_letter:
-    sub r0, 'a'
-    ldr r1, =ascii_lower_letters_map
-    lsl r0, 1
-    ldrh r0, [r1, r0]
-    b lcd_decode_ascii_end
-
-    lcd_decode_ascii_end:
+    sub r0, ' '
+    ldr r1, =ascii_map
+    ldrh r0, [r1, r0, LSL 1]
     orr r0, r2
     bx lr
+
+    901:
+    @ If we get here, we couldn't decode the value
+    mov r1, LCD_ERROR_ASCII_DECODE
+    bl lcd_error
 .size lcd_decode_ascii, . - lcd_decode_ascii
 
 
 /**
  * Updates the physical screen to reflect the current
  * contents of RAM.
+ *
+ * @param {null}
+ * @return {null}
  */
+.global lcd_update_display
 .type lcd_update_display, %function
 lcd_update_display:
     push {lr}
@@ -1262,34 +1123,45 @@ lcd_update_display:
 
     bl wait_for_LCD_SR_UDD
 
-    pop {lr}
-    bx lr
+    pop {pc}
 .size lcd_update_display, . - lcd_update_display
 
 
 /**
- * Clears the RAM
+ * Clears the RAM. Call {lcd_update_display} after to clear
+ * the display too.
+ *
+ * @param {null}
+ * @return {null}
  */
+.global lcd_clear
 .type lcd_clear, %function
 lcd_clear:
     ldr r0, =(LCD + 0x14)
     mov r1, 0
-    ldr r3, =(LCD + 0x14 + 0x30)
+    mov r2, 0
+    mov r3, 0
 
-    lcd_clear_loop:
-    str r1, [r0], 0x4
-    cmp r0, r3
-    bne lcd_clear_loop
+    .rept 4
+    stm r0!, {r1-r3}
+    .endr
 
     bx lr
 .size lcd_clear, . - lcd_clear
 
+
+@@@@@@@@@@@@@
+@@ Private @@
+@@@@@@@@@@@@@
 
 /**
  * Captures any errors related to interfacing with the LCD (after it has been initialised).
  * Will attempt to display the error number.
  *
  * (i.e., if this is reached, then your code is 99% likely wrong (1% possibly bug in library))
+ *
+ * @param r1: error code
+ * @noreturn
  */
 .type lcd_error, %function
 lcd_error:
@@ -1300,29 +1172,193 @@ lcd_error:
     ldr r0, =lcd_error_message
     bl lcd_write_string
 
-    ldr r0, =10
+    movs r0, 10
     cmp r9, r0
-    bge lcd_error_loop_start
+    bge 1f
 
     ldr r0, ='0'
     add r0, r9
-    mov r1, 4
+    movs r1, 4
     bl lcd_write_char
 
-    lcd_error_loop_start:
+    1:
     bl lcd_update_display
-    lcd_error_loop:
+
+    1:
     nop
-    b lcd_error_loop
+    b 1b
 
     lcd_error_message:
     .asciz "Err "
+    .align
 .size lcd_error, . - lcd_error
 
 
-.data
-@ Taken directly from the C library
-ascii_capital_letters_map:
+.type delay, %function
+delay:
+    push {r0}
+    pop {r0}
+    bx lr
+.size delay, . - delay
+
+
+.type var_delay, %function
+var_delay:
+    subs r0, 1
+    bne var_delay
+    bx lr
+.size var_delay, . - var_delay
+
+
+.type wait_for_PWR_CR1_DBP, %function
+wait_for_PWR_CR1_DBP:
+    ldr r0, =PWR
+    ldr r1, [r0, PWR_CR1]
+    tst r1, 1 << PWR_CR1_DBP
+    beq wait_for_PWR_CR1_DBP
+    bx lr
+.size wait_for_PWR_CR1_DBP, . - wait_for_PWR_CR1_DBP
+
+
+.type wait_for_RCC_BDCR_LSERDY, %function
+wait_for_RCC_BDCR_LSERDY:
+    ldr r0, =RCC
+    ldr r1, [r0, RCC_BDCR]
+    tst r1, 1 << RCC_BDCR_LSERDY
+    beq wait_for_RCC_BDCR_LSERDY
+    bx lr
+.size wait_for_RCC_BDCR_LSERDY, . - wait_for_RCC_BDCR_LSERDY
+
+
+.type wait_for_frame_sync, %function
+wait_for_frame_sync:
+    ldr r0, =LCD
+
+    wait1:
+    ldr r1, [r0, LCD_SR]
+    tst r1, 1 << LCD_SR_FCRSF
+    beq wait1
+
+    bx lr
+.size wait_for_frame_sync, . - wait_for_frame_sync
+
+
+/**
+ * @param r1: the current value of RCC_BDCR
+ */
+.type reset_backup_domain, %function
+reset_backup_domain:
+    bic r1, 0b11 << RCC_BDCR_RTCSEL
+
+    @ Toggle on and off
+    ldr r0, =RCC
+    ldr r3, [r0, RCC_BDCR]
+    orr r3, 1 << RCC_BDCR_BDRST
+    str r3, [r0, RCC_BDCR]
+    bic r3, 1 << RCC_BDCR_BDRST
+    str r3, [r0, RCC_BDCR]
+    str r1, [r0, RCC_BDCR]
+
+    ands r1, 1 << RCC_BDCR_LSERDY
+    it ne
+    bxne lr
+
+    push {lr}
+    bl wait_for_RCC_BDCR_LSERDY
+    pop {pc}
+.size reset_backup_domain, . - reset_backup_domain
+
+
+.type delay_for_two_ms, %function
+delay_for_two_ms:
+    ldr r0, =100000
+    delay_for_two_ms_loop:
+    subs r0, 1
+    bne delay_for_two_ms_loop
+    bx lr
+.size delay_for_two_ms, . - delay_for_two_ms
+
+
+.type wait_for_LCD_SR_FCRSF, %function
+wait_for_LCD_SR_FCRSF:
+    ldr r0, =LCD
+    ldr r1, [r0, LCD_SR]
+    tst r1, 1 << LCD_SR_FCRSF
+    beq wait_for_LCD_SR_FCRSF
+    bx lr
+.size wait_for_LCD_SR_FCRSF, . - wait_for_LCD_SR_FCRSF
+
+
+.type wait_for_LCD_SR_ENS, %function
+wait_for_LCD_SR_ENS:
+    ldr r0, =LCD
+    ldr r1, [r0, LCD_SR]
+    tst r1, 1 << LCD_SR_ENS
+    beq wait_for_LCD_SR_ENS
+    bx lr
+.size wait_for_LCD_SR_ENS, . - wait_for_LCD_SR_ENS
+
+
+.type wait_for_LCD_SR_RDY, %function
+wait_for_LCD_SR_RDY:
+    ldr r0, =LCD
+    ldr r1, [r0, LCD_SR]
+    tst r1, 1 << LCD_SR_RDY
+    beq wait_for_LCD_SR_RDY
+    bx lr
+.size wait_for_LCD_SR_RDY, . - wait_for_LCD_SR_RDY
+
+
+.type wait_for_reset_LCD_SR_UDR, %function
+wait_for_reset_LCD_SR_UDR:
+    ldr r0, =LCD
+    ldr r1, [r0, LCD_SR]
+    tst r1, 1 << LCD_SR_UDR
+    bne wait_for_reset_LCD_SR_UDR
+    bx lr
+.size wait_for_reset_LCD_SR_UDR, . - wait_for_reset_LCD_SR_UDR
+
+
+.type wait_for_LCD_SR_UDD, %function
+wait_for_LCD_SR_UDD:
+    ldr r0, =LCD
+    ldr r1, [r0, LCD_SR]
+    tst r1, 1 << LCD_SR_UDD
+    beq wait_for_LCD_SR_UDD
+    bx lr
+.size wait_for_LCD_SR_UDD, . - wait_for_LCD_SR_UDD
+
+
+ascii_map:
+    @ Start at ASCII 0x20 (lower are not visible characters)
+    .hword 0x0000 @ space
+    .hword 0xFFFF @ !
+    .hword 0xFFFF @ "
+    .hword 0xFFFF @ #
+    .hword 0xAF14 @ $
+    .hword 0xB300 @ %
+    .hword 0xFFFF @ &
+    .hword 0x0040 @ '
+    .hword 0x0041 @ (
+    .hword 0x0088 @ )
+    .hword 0xA0DD @ *
+    .hword 0xA014 @ +
+    .hword 0x0080 @ ,
+    .hword 0xA000 @ -
+    .hword 0x0181 @ .
+    .hword 0x00C0 @ /
+
+            /* 0       1       2       3       4       5       6       7       8       9 */
+    .hword  0x5F00, 0x4200, 0xF500, 0x6700, 0xEA00, 0xAF00, 0xBF00, 0x4600, 0xFF00, 0xEF00
+
+    .hword 0xFFFF @ :
+    .hword 0xFFFF @ ;
+    .hword 0xFFFF @ <
+    .hword 0xFFFF @ =
+    .hword 0xFFFF @ >
+    .hword 0xF400 @ ?
+    .hword 0xFFFF @ @
+
             /* A       B       C       D       E       F       G       H       I */
     .hword  0xFE00, 0x6714, 0x1D00, 0x4714, 0x9D00, 0x9C00, 0x3F00, 0xFA00, 0x0014
             /* J       K       L       M       N       O       P       Q       R */
@@ -1330,8 +1366,13 @@ ascii_capital_letters_map:
             /* S       T       U       V       W       X       Y       Z */
     .hword  0xAF00, 0x0414, 0x5B00, 0x18C0, 0x5A81, 0x00C9, 0x0058, 0x05C0
 
-@ Many of these are the same as the uppercase because they have no good representation
-ascii_lower_letters_map:
+    .hword 0x1D00 @ [
+    .hword 0x0009 @ \
+    .hword 0x4700 @ ]
+    .hword 0x0081 @ ^
+    .hword 0xFFFF @ _
+    .hword 0x0008 @ `
+
             /* a       b       c       d       e       f       g       h       i */
     .hword  0xFE00, 0x6714, 0x1D00, 0xF300, 0x9D00, 0x9C00, 0x3F00, 0xFA00, 0x0014
             /* j       k       l       m       n       o       p       q       r */
@@ -1339,12 +1380,13 @@ ascii_lower_letters_map:
             /* s       t       u       v       w       x       y       z */
     .hword  0xAF00, 0x0414, 0x5B00, 0x18C0, 0x5A81, 0x00C9, 0x0058, 0x05C0
 
-ascii_numbers_map:
-            /* 0       1       2       3       4       5       6       7       8      9 */
-    .hword  0x5F00, 0x4200, 0xF500, 0x6700, 0xEA00, 0xAF00, 0xBF00, 0x4600, 0xFF00, 0xEF00
-
-.text
+    .hword 0x8041 @ {
+    .hword 0x0014 @ |
+    .hword 0x2088 @ }
+    .hword 0xFFFF @ ~
 .align
+
+
 @@@@@@@@@@@@@@@
 @@ Constants @@
 @@@@@@@@@@@@@@@
@@ -1455,143 +1497,3 @@ ascii_numbers_map:
     .eqv LCD_DIGIT4_COM2_1, 0x28
     .eqv LCD_DIGIT1_COM3, 0x2C
     .eqv LCD_DIGIT4_COM3_1, 0x30
-
-@@@@@@@@@@@@@@@@@@@@
-@@ Misc Functions @@
-@@@@@@@@@@@@@@@@@@@@
-
-.type delay, %function
-delay:
-    push {r0}
-    pop {r0}
-    bx lr
-.size delay, . - delay
-
-
-.type var_delay, %function
-var_delay:
-    var_delay_loop:
-    subs r0, 1
-    bne var_delay_loop
-    bx lr
-.size var_delay, . - var_delay
-
-
-.type wait_for_PWR_CR1_DBP, %function
-wait_for_PWR_CR1_DBP:
-    ldr r0, =PWR
-    ldr r1, [r0, PWR_CR1]
-    tst r1, 1 << PWR_CR1_DBP
-    beq wait_for_PWR_CR1_DBP
-    bx lr
-.size wait_for_PWR_CR1_DBP, . - wait_for_PWR_CR1_DBP
-
-
-.type wait_for_RCC_BDCR_LSERDY, %function
-wait_for_RCC_BDCR_LSERDY:
-    ldr r0, =RCC
-    ldr r1, [r0, RCC_BDCR]
-    tst r1, 1 << RCC_BDCR_LSERDY
-    beq wait_for_RCC_BDCR_LSERDY
-    bx lr
-.size wait_for_RCC_BDCR_LSERDY, . - wait_for_RCC_BDCR_LSERDY
-
-
-.type wait_for_frame_sync, %function
-wait_for_frame_sync:
-    ldr r0, =LCD
-
-    wait1:
-    ldr r1, [r0, LCD_SR]
-    tst r1, 1 << LCD_SR_FCRSF
-    beq wait1
-
-    bx lr
-.size wait_for_frame_sync, . - wait_for_frame_sync
-
-
-/**
- * @param r1: the current value of RCC_BDCR
- */
-.type reset_backup_domain, %function
-reset_backup_domain:
-    bic r1, 0b11 << RCC_BDCR_RTCSEL
-
-    @ Toggle on and off
-    ldr r0, =RCC
-    ldr r3, [r0, RCC_BDCR]
-    orr r3, 1 << RCC_BDCR_BDRST
-    str r3, [r0, RCC_BDCR]
-    bic r3, 1 << RCC_BDCR_BDRST
-    str r3, [r0, RCC_BDCR]
-    str r1, [r0, RCC_BDCR]
-
-    ands r1, 1 << RCC_BDCR_LSERDY
-    it ne
-    bxne lr
-
-    push {lr}
-    bl wait_for_RCC_BDCR_LSERDY
-    pop {lr}
-    bx lr
-.size reset_backup_domain, . - reset_backup_domain
-
-
-.type delay_for_two_ms, %function
-delay_for_two_ms:
-    ldr r0, =100000
-    delay_for_two_ms_loop:
-    subs r0, 1
-    bne delay_for_two_ms_loop
-    bx lr
-.size delay_for_two_ms, . - delay_for_two_ms
-
-
-.type wait_for_LCD_SR_FCRSF, %function
-wait_for_LCD_SR_FCRSF:
-    ldr r0, =LCD
-    ldr r1, [r0, LCD_SR]
-    tst r1, 1 << LCD_SR_FCRSF
-    beq wait_for_LCD_SR_FCRSF
-    bx lr
-.size wait_for_LCD_SR_FCRSF, . - wait_for_LCD_SR_FCRSF
-
-
-.type wait_for_LCD_SR_ENS, %function
-wait_for_LCD_SR_ENS:
-    ldr r0, =LCD
-    ldr r1, [r0, LCD_SR]
-    tst r1, 1 << LCD_SR_ENS
-    beq wait_for_LCD_SR_ENS
-    bx lr
-.size wait_for_LCD_SR_ENS, . - wait_for_LCD_SR_ENS
-
-
-.type wait_for_LCD_SR_RDY, %function
-wait_for_LCD_SR_RDY:
-    ldr r0, =LCD
-    ldr r1, [r0, LCD_SR]
-    tst r1, 1 << LCD_SR_RDY
-    beq wait_for_LCD_SR_RDY
-    bx lr
-.size wait_for_LCD_SR_RDY, . - wait_for_LCD_SR_RDY
-
-
-.type wait_for_reset_LCD_SR_UDR, %function
-wait_for_reset_LCD_SR_UDR:
-    ldr r0, =LCD
-    ldr r1, [r0, LCD_SR]
-    tst r1, 1 << LCD_SR_UDR
-    bne wait_for_reset_LCD_SR_UDR
-    bx lr
-.size wait_for_reset_LCD_SR_UDR, . - wait_for_reset_LCD_SR_UDR
-
-
-.type wait_for_LCD_SR_UDD, %function
-wait_for_LCD_SR_UDD:
-    ldr r0, =LCD
-    ldr r1, [r0, LCD_SR]
-    tst r1, 1 << LCD_SR_UDD
-    beq wait_for_LCD_SR_UDD
-    bx lr
-.size wait_for_LCD_SR_UDD, . - wait_for_LCD_SR_UDD

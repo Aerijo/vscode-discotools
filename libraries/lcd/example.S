@@ -1,13 +1,13 @@
 .syntax unified
-.global main
 
-.include "lcd.S"
 
 .data
 hello_world: .asciz "'HELLO, WORLD'"
-alphabet: .asciz "ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789"
-
+alphabet:    .asciz "ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789"
 .text
+
+
+.global main
 .type main, %function
 main:
     bl lcd_init
