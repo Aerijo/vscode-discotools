@@ -1091,6 +1091,11 @@ lcd_decode_ascii:
     sub r0, ' '
     ldr r1, =ascii_map
     ldrh r0, [r1, r0, LSL 1]
+
+    ldr r1, =0xFFFF
+    cmp r0, r1
+    beq 901f
+
     orr r0, r2
     bx lr
 
@@ -1367,7 +1372,7 @@ ascii_map:
     .hword  0xAF00, 0x0414, 0x5B00, 0x18C0, 0x5A81, 0x00C9, 0x0058, 0x05C0
 
     .hword 0x1D00 @ [
-    .hword 0x0009 @ \
+    .hword 0x0009 @ '\'
     .hword 0x4700 @ ]
     .hword 0x0081 @ ^
     .hword 0xFFFF @ _
