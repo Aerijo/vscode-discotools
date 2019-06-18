@@ -37,6 +37,10 @@ rng_init:
 .size rng_init, . - rng_init
 
 
+/**
+ * @param {null}
+ * @return r0 - A 32 bit random number
+ */
 .global rng_get_number
 .type rng_get_number, %function
 rng_get_number:
