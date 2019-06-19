@@ -10,14 +10,14 @@
 .global main
 .type main, %function
 main:
+    bl led_red_init
+    bl led_green_init
+
     mov r0, 0b101111
     bl joystick_init_buttons
 
     mov r0, 0b101111
     bl joystick_enable_interrupt_buttons
-
-    bl led_red_init
-    bl led_green_init
 
     loop:
     nop @ everything else is done via interrupts
