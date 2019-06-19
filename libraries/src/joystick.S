@@ -172,7 +172,7 @@ joystick_enable_interrupts_all:
 .global joystick_enable_interrupt_buttons
 .type joystick_enable_interrupt_buttons, %function
 joystick_enable_interrupt_buttons:
-    and r3, r0, 0b101111
+    and r2, r0, 0b101111
 
     ldr r0, =RCC
     ldr r1, [r0, RCC_APB2ENR]
@@ -181,21 +181,21 @@ joystick_enable_interrupt_buttons:
 
     ldr r0, =SYSCFG
     ldr r1, [r0, SYSCFG_EXTICR1]
-    tst r3, (1 << 0)
+    tst r2, (1 << 0)
     it ne
     bicne r1, (0b111 << 0)
-    tst r3, (1 << 1)
+    tst r2, (1 << 1)
     it ne
     bicne r1, (0b111 << 4)
-    tst r3, (1 << 2)
+    tst r2, (1 << 2)
     it ne
     bicne r1, (0b111 << 8)
-    tst r3, (1 << 3)
+    tst r2, (1 << 3)
     it ne
     bicne r1, (0b111 << 12)
     str r1, [r0, SYSCFG_EXTICR1]
 
-    tst r3, (1 << 5)
+    tst r2, (1 << 5)
     beq 1f
 
     ldr r1, [r0, SYSCFG_EXTICR2]
@@ -206,23 +206,22 @@ joystick_enable_interrupt_buttons:
 
     ldr r0, =EXTI
     ldr r1, [r0, EXTI_IMR1]
-    orr r1, r3
+    orr r1, r2
     str r1, [r0, EXTI_IMR1]
 
     ldr r1, [r0, EXTI_RTSR1]
-    orr r1, r3
+    orr r1, r2
     str r1, [r0, EXTI_RTSR1]
 
     ldr r1, [r0, EXTI_FTSR1]
-    bic r1, r3
+    bic r1, r2
     str r1, [r0, EXTI_FTSR1]
 
     ldr r0, =NVIC
     ldr r1, [r0, NVIC_ICER0]
-    and r2, r3, 0b1111
-    lsl r2, 6
-    orr r1, r2
-    tst r3, (1 << 5)
+    tst r2, (1 << 5)
+    and r2, 0b1111
+    orr r1, r1, r2, LSL 6
     it ne
     orrne r1, (1 << 23)
     str r1, [r0, NVIC_ICER0]
