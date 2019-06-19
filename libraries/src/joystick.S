@@ -270,3 +270,4 @@ joystick_clear_interrupt:
     .equiv EXTI_PR1, 0x14
 
 .equiv NVIC, 0xE000E100
+    .equiv NVIC_ICER0, 0x0
