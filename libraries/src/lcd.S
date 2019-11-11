@@ -1078,7 +1078,8 @@ lcd_decode_ascii:
     cmp r0, 0xFF
     bne 1f
 
-    orr r0, 0xFFDD
+    ldr r1, =0xFFDD
+    orr r0, r1
     bx lr
 
     1:
