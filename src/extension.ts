@@ -11,7 +11,6 @@ export function isStartWideInstruction(hword: number) {
 	return (hword & 0xE000) === 0xE000 && (hword & 0x1800) > 0; // first 3 bits are high && 4th or 5th is high
 }
 
-
 enum Type {
 	HWORD,
 	WORD,
@@ -69,7 +68,7 @@ function getHoverContext(position: vs.Position, document: vs.TextDocument): Hove
 
 
 export function activate(context: vs.ExtensionContext) {
-	vs.languages.registerHoverProvider("cortex-debug.memoryview", {
+	const hoverProvider = {
 		provideHover(document: vs.TextDocument, position: vs.Position): vs.ProviderResult<vs.Hover> {
 			const context = getHoverContext(position, document);
 			if (context === null) { return null; }
@@ -125,7 +124,10 @@ export function activate(context: vs.ExtensionContext) {
 
 			return new vs.Hover(markedString, context.range);
 		}
-	});
+	};
+
+	vs.languages.registerHoverProvider("platformio-debug.memoryview", hoverProvider);
+	vs.languages.registerHoverProvider("cortex-debug.memoryview", hoverProvider);
 
 	vs.commands.registerCommand("discotools.openManualPage", (page: number | undefined) => {
 		if (page === undefined) {
