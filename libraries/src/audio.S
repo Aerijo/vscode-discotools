@@ -20,7 +20,7 @@ audio_init:
     ldr r0, =15000
     bl audio_buffer
 
-    pop {lr}
+    pop {pc}
 .size audio_init, . - audio_init
 
 
