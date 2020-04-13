@@ -8,7 +8,7 @@ project_root/
     |- lib/
     | |- audio.S
     | `- clock.S
-    ` main.S
+    `- main.S
 ```
 
 ```
