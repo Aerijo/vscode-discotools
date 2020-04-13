@@ -19,7 +19,7 @@
  *   We attempt this with:
  *   - MSI @ 48 MHz + LSE calibration
  *   - Pass this MSI directly to RNG
- *   - Divide by 6 to get 8MHz PLL VOS input
+ *   - Divide by 6 to get 8MHz PLL VCO input
  *   - Multiply by 20 to get PLL input (160 MHz)
  *   - Divide by 2 to get 80 MHz SYSCLK
  *   - Multiply by 43 to get PLLSAI1 input (344 MHz)
