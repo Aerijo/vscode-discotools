@@ -1,39 +1,438 @@
 .syntax unified
 
-@@@@@@@@@@@@
-@@ Public @@
-@@@@@@@@@@@@
+/**
+ * @author Benjamin Gray
+ * @license MIT
+ * @version 1.0.0
+ * @brief
+ *   This library configures the SAI and external DAC to play sound
+ *   at 48 kHz. The clocks must all be pre-configured using `clock_init`.
+ *
+ *   The general configuration is as follows:
+ *   - An external DAC (Cirrus Logic CS43L22) generates analog output in the
+ *     headphone jack based on 16-bit digital samples.
+ *   - This DAC is clocked by the SAI peripheral. This SAI generates the master clock
+ *     (MCLK) that the DAC needs to do work, as well as the SCK which indicates time
+ *     to read a new data bit and the FC which controls when the sample is considered
+ *     finished. FC also directly controls the sound output frequency.
+ *   - The SAI also maintains a FIFO sample buffer that automatically sends samples to the DAC.
+ *     It is apparently 8 words large. We configure it and the DAC to use the I2S protocol to
+ *     send the data.
+ *   - The DAC itself is configured using the I2C bus. This lets us control the power, volume,
+ *     data format, etc. As noted above, the output frequency is determined by the MCLK/SCK/FS
+ *      clocks provided from the SAI.
+ *   - The SAI itself is clocked using a phase-locked loop (PLL) clock. PLLs are interesting
+ *     devices that can be used to accurately *multiply* an input clock speed. This means we
+ *     use one of the several clocks on the board (HSE, HSI16, MSI, etc.) to generate a much
+ *     higher clock speed than the clock itself can output. In our case, we have the MSI clock
+ *     at 48 MHz (so RNG can use it), and scale it up to 80 MHz for the SYSCLK (clock driving the CPU),
+ *     and down to 49.14 MHz for the SAI peripheral.
+ *     NOTE: PLLSAI1 and SAI1 have no particular relation to each other. PLLSAI1 refers to the
+ *           PLL clock, SAI1 to one of the actual SAI peripherals.
+ *
+ *   Relevant links:
+ *   - CS43L22: https://www.cirrus.com/products/cs43l22/ (see the data sheet for configuration details)
+ *   - I2C bus: https://en.wikipedia.org/wiki/I%C2%B2C
+ *   - I2S interface: https://en.wikipedia.org/wiki/I%C2%B2S
+ *   - PLLs: https://en.wikipedia.org/wiki/Phase-locked_loop
+ *   - STM32L476VG: https://www.st.com/en/microcontrollers-microprocessors/stm32l476vg.html (see the data sheet for clock connections, GPIO alternate functions)
+ *   - STM32 Peripherals: https://www.st.com/resource/en/reference_manual/dm00083560-stm32l4x5-and-stm32l4x6-advanced-armbased-32bit-mcus-stmicroelectronics.pdf
+ *       (for peripheral register locations and meanings, plus in depth peripheral descriptions)
+ *
+ * @pins B6, B7, E2-6
+ */
 
 .global audio_init
 .type audio_init, %function
 audio_init:
     push {lr}
 
-    bl HAL_RCCEx_PeriphCLKConfig_asm_sai1
+    @ Enable PLLSAI1/P
+    ldr r0, =RCC
+    ldr r1, [r0, RCC_PLLSAI1CFGR]
+    orr r1, (1 << RCC_PLLSAI1CFGR_PLLSAI1PEN)
+    str r1, [r0, RCC_PLLSAI1CFGR]
 
-    bl AUDIO_SAIx_Init_asm
+    @ Enable PLLSAI1
+    ldr r1, [r0, RCC_CR]
+    orr r1, (1 << RCC_CR_PLLSAI1ON)
+    str r1, [r0, RCC_CR]
 
-    bl cs43l22_drv_ReadID_asm
+    @ Wait until change takes effect
+    1:
+    ldr r1, [r0, RCC_CR]
+    tst r1, (1 << RCC_CR_PLLSAI1RDY)
+    beq 1b
 
-    bl cs43l22_Init_asm
+    @ Set SAI1 to use PLLSAI1/P clock
+    ldr r1, [r0, RCC_CCIPR]
+    bic r1, (0b11 << RCC_CCIPR_SAI1SEL)
+    str r1, [r0, RCC_CCIPR]
 
-    ldr r0, =15000
-    bl audio_buffer
+    @ Enable SAI1 clock
+    ldr r0, =RCC
+    ldr r1, [r0, RCC_APB2ENR]
+    orr r1, (1 << RCC_APB2ENR_SAI1EN)
+    str r1, [r0, RCC_APB2ENR]
+
+    @ Enable GPIOB (I2C1) and GPIOE (SAI1) clocks
+    ldr r1, [r0, RCC_AHB2ENR]
+    orr r1, (1 << RCC_AHB2ENR_GPIOBEN)
+    orr r1, (1 << RCC_AHB2ENR_GPIOEEN)
+    str r1, [r0, RCC_AHB2ENR]
+
+    @ Set GPIOE pins for SAI1 functionality (STM32L476VGT6 datasheet, 4 Table 17, p84)
+    ldr r0, =GPIOE
+    ldr r1, [r0, GPIOx_MODER]
+    bic r1, (0b11 << GPIOx_MODER_MODE2)
+    orr r1, (0b10 << GPIOx_MODER_MODE2)
+    bic r1, (0b11 << GPIOx_MODER_MODE4)
+    orr r1, (0b10 << GPIOx_MODER_MODE4)
+    bic r1, (0b11 << GPIOx_MODER_MODE5)
+    orr r1, (0b10 << GPIOx_MODER_MODE5)
+    bic r1, (0b11 << GPIOx_MODER_MODE6)
+    orr r1, (0b10 << GPIOx_MODER_MODE6)
+    str r1, [r0, GPIOx_MODER]
+
+    ldr r1, [r0, GPIOx_OTYPER]
+    bic r1, (1 << GPIOx_OTYPER_OT2)
+    bic r1, (1 << GPIOx_OTYPER_OT4)
+    bic r1, (1 << GPIOx_OTYPER_OT5)
+    bic r1, (1 << GPIOx_OTYPER_OT6)
+    str r1, [r0, GPIOx_OTYPER]
+
+    ldr r1, [r0, GPIOx_OSPEEDR]
+    orr r1, (0b11 << GPIOx_OSPEEDR_OSPEED2)
+    orr r1, (0b11 << GPIOx_OSPEEDR_OSPEED4)
+    orr r1, (0b11 << GPIOx_OSPEEDR_OSPEED5)
+    orr r1, (0b11 << GPIOx_OSPEEDR_OSPEED6)
+    str r1, [r0, GPIOx_OSPEEDR]
+
+    ldr r1, [r0, GPIOx_PUPDR]
+    bic r1, (0b11 << GPIOx_PUPDR_PUPD2)
+    bic r1, (0b11 << GPIOx_PUPDR_PUPD4)
+    bic r1, (0b11 << GPIOx_PUPDR_PUPD5)
+    bic r1, (0b11 << GPIOx_PUPDR_PUPD6)
+    str r1, [r0, GPIOx_PUPDR]
+
+    ldr r1, [r0, GPIOx_AFRL]
+    bic r1, (0xF << GPIOx_AFRL_AFSEL2)
+    orr r1, (13 << GPIOx_AFRL_AFSEL2)
+    bic r1, (0xF << GPIOx_AFRL_AFSEL4)
+    orr r1, (13 << GPIOx_AFRL_AFSEL4)
+    bic r1, (0xF << GPIOx_AFRL_AFSEL5)
+    orr r1, (13 << GPIOx_AFRL_AFSEL5)
+    bic r1, (0xF << GPIOx_AFRL_AFSEL6)
+    orr r1, (13 << GPIOx_AFRL_AFSEL6)
+    str r1, [r0, GPIOx_AFRL]
+
+    @ Disable SAI1
+    ldr r0, =SAI1
+    ldr r1, [r0, SAIx_ACR1]
+    bic r1, (1 << SAIx_xCR1_SAIxEN)
+    str r1, [r0, SAIx_ACR1]
+
+    @ Wait for disable to take effect
+    1:
+    ldr r1, [r0, SAIx_ACR1]
+    tst r1, (1 << SAIx_xCR1_SAIxEN)
+    bne 1b
+
+    @ Disable syncronisation
+    ldr r1, [r0, SAIx_GCR]
+    bic r1, (0b11 << SAIx_GCR_SYNCOUT)
+    bic r1, (0b11 << SAIx_GCR_SYNCIN)
+    str r1, [r0, SAIx_GCR]
+
+    @ Configure SAI1 ACR1
+    ldr r1, [r0, SAIx_ACR1]
+    bic r1, (0b11 << SAIx_xCR1_MODE)   @ Set to master transmitter mode
+    bic r1, (0b11 << SAIx_xCR1_PRTCFG) @ Set to free protocol
+    bic r1, (0b111 << SAIx_xCR1_DS)    @ Set to 16 bit data size
+    orr r1, (0b100 << SAIx_xCR1_DS)
+    bic r1, (1 << SAIx_xCR1_LSBFIRST)  @ Send most significant bit first (expected by DAC in I2S mode)
+    orr r1, (1 << SAIx_xCR1_CKSTR)     @ Set clock strobing edge to falling (signals change on SCK falling edge) (I2S)
+    bic r1, (0b11 << SAIx_xCR1_SYNCEN) @ Set to asynchronous mode
+    orr r1, (1 << SAIx_xCR1_MONO)      @ Set sound to mono output (sample is duplicated for left and right channels)
+    orr r1, (1 << SAIx_xCR1_OUTDRIV)   @ Start driving audio block immediately
+    orr r1, (1 << SAIx_xCR1_DMAEN)     @ Enable the DMA
+    bic r1, (1 << SAIx_xCR1_NODIV)     @ Enable MCLK output
+    bic r1, (0b1111 << SAIx_xCR1_MCKDIV) @ Divide the MCLK by 4 (from 49.142857143 MHz to 12.285714286 MHz)
+    orr r1, (0b0010 << SAIx_xCR1_MCKDIV)
+    str r1, [r0, SAIx_ACR1]
+
+    @ Configure SAI1 ACR2
+    ldr r1, [r0, SAIx_ACR2]
+    bic r1, (0b111 << SAIx_xCR2_FTH) @ Set FIFO interrupt threshold to 1/2 full
+    orr r1, (0b001 << SAIx_xCR2_FTH)
+    orr r1, (1 << SAIx_xCR2_FFLUSH)  @ Flush the FIFO of any old data
+    bic r1, (1 << SAIx_xCR2_TRIS)    @ Drive SD line low when slot inactive
+    bic r1, (1 << SAIx_xCR2_MUTE)    @ Disable mute
+    bic r1, (0b11 << SAIx_xCR2_COMP) @ Disable companding
+    str r1, [r0, SAIx_ACR2]
+
+    @ Configure SAI1 AFRCR
+    ldr r1, [r0, SAIx_AFRCR]
+    bic r1, (0xFF << SAIx_xFRCR_FRL)   @ Set frame size to 32 bits, as we are sending two 16 bit samples (left and right channels) (I2S)
+    orr r1, (31 << SAIx_xFRCR_FRL)
+    bic r1, (0x7F << SAIx_xFRCR_FSALL) @ Set frame synchronisation active level for half the frame size (16)
+    orr r1, (0xF << SAIx_xFRCR_FSALL)
+    orr r1, (1 << SAIx_xFRCR_FSDEF)    @ Set identification for left and right channels (I2S)
+    bic r1, (1 << SAIx_xFRCR_FSPOL)    @ Set polarity to FS active low (falling edge) (I2S)
+    orr r1, (1 << SAIx_xFRCR_FSOFF)    @ FS is asserted one bit before the first bit of the slot 0 (I2S)
+    str r1, [r0, SAIx_AFRCR]
+
+    @ Configure SAI1 ASLOTR
+    ldr r1, [r0, SAIx_ASLOTR]
+    bic r1, (0x1F << SAIx_xSLOTR_FBOFF)    @ Set first bit offset to 0
+    bic r1, (0b11 << SAIx_xSLOTR_SLOTSZ)   @ Set slot size to equal data size
+    bic r1, (0xF << SAIx_xSLOTR_NBSLOT)    @ Set 2 slots per audio frame (I2S)
+    orr r1, (1 << SAIx_xSLOTR_NBSLOT)
+    .set TMP, 0xFFFF << SAIx_xSLOTR_SLOTEN @ Set first two slots as enabled
+    ldr r2, =TMP
+    orr r1, (0b11 << SAIx_xSLOTR_SLOTEN)
+    str r1, [r0, SAIx_ASLOTR]
+
+    @ Enable SAI1
+    ldr r0, =SAI1
+    ldr r1, [r0, SAIx_ACR1]
+    orr r1, (1 << SAIx_xCR1_SAIxEN)
+    str r1, [r0, SAIx_ACR1]
+
+    @ Configure GPIO pin for audio reset line (E3)
+    ldr r0, =GPIOE
+    ldr r1, [r0, GPIOx_MODER]
+    bic r1, (0b11 << GPIOx_MODER_MODE3)
+    orr r1, (0b01 << GPIOx_MODER_MODE3)
+    str r1, [r0, GPIOx_MODER]
+
+    ldr r1, [r0, GPIOx_OTYPER]
+    bic r1, (1 << GPIOx_OTYPER_OT3)
+    str r1, [r0, GPIOx_OTYPER]
+
+    ldr r1, [r0, GPIOx_OSPEEDR]
+    orr r1, (0b11 << GPIOx_OSPEEDR_OSPEED3)
+    str r1, [r0, GPIOx_OSPEEDR]
+
+    ldr r1, [r0, GPIOx_PUPDR]
+    bic r1, (0b11 << GPIOx_PUPDR_PUPD3)
+    str r1, [r0, GPIOx_PUPDR]
+
+    @ Set I2C1 clock source to SYSCLK
+    ldr r0, =RCC
+    ldr r1, [r0, RCC_CCIPR]
+    bic r1, (0b11 << RCC_CCIPR_I2C1SEL)
+    orr r1, (0b01 << RCC_CCIPR_I2C1SEL)
+    str r1, [r0, RCC_CCIPR]
+
+    @ Set GPIOB pins 6 and 7 for I2C1 TX/RX
+    ldr r0, =GPIOB
+    ldr r1, [r0, GPIOx_MODER]
+    bic r1, (0b11 << GPIOx_MODER_MODE6)
+    orr r1, (0b10 << GPIOx_MODER_MODE6)
+    bic r1, (0b11 << GPIOx_MODER_MODE7)
+    orr r1, (0b10 << GPIOx_MODER_MODE7)
+    str r1, [r0, GPIOx_MODER]
+
+    ldr r1, [r0, GPIOx_OTYPER]
+    orr r1, (1 << GPIOx_OTYPER_OT6)
+    orr r1, (1 << GPIOx_OTYPER_OT7)
+    str r1, [r0, GPIOx_OTYPER]
+
+    ldr r1, [r0, GPIOx_OSPEEDR]
+    orr r1, (0b11 << GPIOx_OSPEEDR_OSPEED6)
+    orr r1, (0b11 << GPIOx_OSPEEDR_OSPEED7)
+    str r1, [r0, GPIOx_OSPEEDR]
+
+    ldr r1, [r0, GPIOx_PUPDR]
+    bic r1, (0b11 << GPIOx_PUPDR_PUPD6)
+    orr r1, (0b01 << GPIOx_PUPDR_PUPD6)
+    bic r1, (0b11 << GPIOx_PUPDR_PUPD7)
+    orr r1, (0b01 << GPIOx_PUPDR_PUPD7)
+    str r1, [r0, GPIOx_PUPDR]
+
+    ldr r1, [r0, GPIOx_AFRL]
+    bic r1, (0xF << GPIOx_AFRL_AFSEL6)
+    orr r1, (4 << GPIOx_AFRL_AFSEL6)
+    bic r1, (0xF << GPIOx_AFRL_AFSEL7)
+    orr r1, (4 << GPIOx_AFRL_AFSEL7)
+    str r1, [r0, GPIOx_AFRL]
+
+    @ Enable I2C1 clock
+    ldr r0, =RCC
+    ldr r1, [r0, RCC_APB1ENR1]
+    orr r1, (1 << RCC_APB1ENR1_I2C1EN)
+    str r1, [r0, RCC_APB1ENR1]
+
+    @ Wait for clock to enable
+    1:
+    ldr r1, [r0, RCC_APB1ENR1]
+    tst r1, (1 << RCC_APB1ENR1_I2C1EN)
+    beq 1b
+
+    @ Disable I2C1
+    ldr r0, =I2C1
+    ldr r1, [r0, I2Cx_CR1]
+    bic r1, (1 << I2Cx_CR1_PE)
+    str r1, [r0, I2Cx_CR1]
+
+    @ Wait for it to disable
+    1:
+    ldr r1, [r0, I2Cx_CR1]
+    tst r1, (1 << I2Cx_CR1_PE)
+    bne 1b
+
+    @ Configure I2C1 CR1
+    ldr r1, [r0, I2Cx_CR1]
+    bic r1, (0b111 << I2Cx_CR1_DNF) @ disable digital noise filter
+    orr r1, (0b000 << I2Cx_CR1_DNF)
+    bic r1, (1 << I2Cx_CR1_ANFOFF)  @ disable analog noise filter
+    bic r1, (1 << I2Cx_CR1_TXDMAEN) @ Disable DMA transmission
+    bic r1, (1 << I2Cx_CR1_RXDMAEN) @ Disable DMA reception
+    str r1, [r0, I2Cx_CR1]
+
+    @ Configure I2C1 TIMINGR
+    @ NOTE: This sets up various timings that all have various relational
+    @       requirements. Typically this would be calculated by an ST tool, but
+    @       we just use the value in the stm32l476g_discovery.h file authored
+    @       by the MCD Application Team that notes it was picked for an 80 MHz
+    @       input clock like we are using.
+    ldr r1, =0x90112626
+    str r1, [r0, I2Cx_TIMINGR]
+
+    @ Enable I2C1
+    ldr r1, [r0, I2Cx_CR1]
+    orr r1, (1 << I2Cx_CR1_PE)
+    str r1, [r0, I2Cx_CR1]
+
+    @ Wait for enable to take effect
+    1:
+    ldr r1, [r0, I2Cx_CR1]
+    tst r1, (1 << I2Cx_CR1_PE)
+    beq 1b
+
+    @ Set audio RESET line high
+    ldr r0, =GPIOE
+    mov r1, 1 << GPIOx_BSRR_BS3
+    str r1, [r0, GPIOx_BSRR]
+
+    @ Verify the DAC ID and revision
+    bl cs43l22_verify
+
+    @ Turn off the DAC
+    mov r0, CS43L22_PWR1_02
+    mov r1, 0x01
+    bl cs43l22_write
+
+    @ Enable headphones, disable speakers
+    mov r0, CS43L22_PWR2_04
+    mov r1, 0xAF
+    bl cs43l22_write
+
+    @ Auto detect speed mode & divide MCLK input by 2 (expected ratio is 128:1, fixed in SAI is 256:1)
+    mov r0, CS43L22_CLK_05
+    mov r1, 0x81
+    bl cs43l22_write
+
+    @ Slave mode, I2S format
+    mov r0, CS43L22_ITRFC1_06
+    mov r1, 0x04
+    bl cs43l22_write
+
+    @ Set volume to 50 (out of 0--100)
+    mov r0, 50
+    bl cs43l22_set_volume
+
+    @ Change volume immediately
+    mov r0, CS43L22_ZCSR_0A
+    mov r1, 0x00
+    bl cs43l22_write
+
+    @ Disable volume soft ramp
+    mov r0, CS43L22_MISC_0E
+    mov r1, 0x00
+    bl cs43l22_write
+
+    @ Disable sound limiter / cushion
+    mov r0, CS43L22_LIMITCTRL2_28
+    mov r1, 0x00
+    bl cs43l22_write
+
+    @ Set treble and bass gain to 0 dB
+    mov r0, CS43L22_TONE_1F
+    mov r1, 0x88
+    bl cs43l22_write
+
+    @ Set volume/gain of PCM data from SDIN (+5 dB)
+    mov r0, CS43L22_PCMA_1A
+    mov r1, 0x0A
+    bl cs43l22_write
+
+    @ As above, for other ear
+    mov r0, CS43L22_PCMB_1B
+    mov r1, 0x0A
+    bl cs43l22_write
+
+    @ Turn on the DAC
+    mov r0, CS43L22_PWR1_02
+    mov r1, 0x9E
+    bl cs43l22_write
 
     pop {pc}
 .size audio_init, . - audio_init
 
 
 /**
- * Buffers the given output.
+ * Set the volume to an arbitrary number in 0--100
  *
- * @param r0 - amplitude to emit (16 bit)
- * @return {null}
+ * @param r0 - new volume level (0--100)
+ */
+.global cs43l22_set_volume
+.type cs43l22_set_volume, %function
+cs43l22_set_volume:
+    push {r4, lr}
+
+    cmp r0, 100
+    bgt 99f
+
+    mov r1, 255
+    mov r2, 100
+    mul r0, r1
+    udiv r0, r2
+
+    cmp r0, 0xE6
+    ble 1f
+    sub r4, r0, 0xE7
+    b 2f
+    1:
+    add r4, r0, 0x19
+    2:
+    mov r0, CS43L22_MSTVOLA_20
+    mov r1, r4
+    bl cs43l22_write
+
+    mov r0, CS43L22_MSTVOLB_21
+    mov r1, r4
+    bl cs43l22_write
+
+    pop {r4, pc}
+
+    99:
+    @ Volume error
+    nop
+    b 99b
+.size cs43l22_set_volume, . - cs43l22_set_volume
+
+
+/**
+ * Places the sample in to FIFO buffer to be passed to
+ * the DAC.
+ *
+ * @param r0 - 16 bit sample to output
  */
 .global audio_play_sample
 .type audio_play_sample, %function
 audio_play_sample:
-    @ We want to wait for the LVL to not be full, then emit the payload
     ldr r2, =SAI1
     1:
     ldr r1, [r2, SAIx_ASR]
@@ -48,1008 +447,515 @@ audio_play_sample:
 
 
 /**
- * Play a number of samples with 0 amplitude. Used
- * to wait for the SAI to "warm up"? It may cut off
- * the starting sound if not used.
- *
- * @param r0 - number of samples to play
+ * Reads the external DAC ID and revision number, ensuring
+ * it is the right one. Also makes sure the I2C read is
+ * working as expected.
  */
-.global audio_buffer
-.type audio_buffer, %function
-audio_buffer:
-  push {r4, lr}
-  mov r4, r0
-
-  1:
-  mov r0, 0
-  bl audio_play_sample
-  subs r4, 1
-  bne 1b
-
-  pop {r4, pc}
-.size audio_buffer, . - audio_buffer
-
-
-@@@@@@@@@@@@@
-@@ Private @@
-@@@@@@@@@@@@@
-
-.type HAL_RCCEx_PeriphCLKConfig_asm_sai1, %function
-HAL_RCCEx_PeriphCLKConfig_asm_sai1:
+.type cs43l22_verify, %function
+cs43l22_verify:
     push {lr}
 
-    bl RCCEx_PLLSAI1_Config_asm
+    mov r0, CS43L22_ID_01
+    bl cs43l22_read
 
-    ldr r0, =RCC
-    ldr r1, [r0, RCC_CCIPR]
-    bic r1, (0b11 << RCC_CCIPR_SAI1SEL)
-    str r1, [r0, RCC_CCIPR]
+    lsr r1, r0, 3
+    cmp r1, 0b11100
+    bne 2f
 
-    pop {lr}
-    bx lr
-.size HAL_RCCEx_PeriphCLKConfig_asm_sai1, . - HAL_RCCEx_PeriphCLKConfig_asm_sai1
+    and r1, r0, 0b111
+    tst r1, 1 << 2
+    bne 3f
 
+    pop {pc}
 
-.type RCCEx_PLLSAI1_Config_asm, %function
-RCCEx_PLLSAI1_Config_asm:
-    @ __HAL_RCC_PLLSAI1_DISABLE
-    ldr r0, =RCC
-    ldr r1, [r0, RCC_CR]
-    bic r1, (1 << RCC_CR_PLLSAI1ON)
-    str r1, [r0, RCC_CR]
-
-    @ Wait until PLLSAI1 is ready to be updated
-    1:
-    ldr r1, [r0, RCC_CR]
-    tst r1, (1 << RCC_CR_PLLSAI1RDY)
-    bne 1b
-
-    @ Configure the PLLSAI1 Division factor P and Multiplication factor N
-    ldr r1, [r0, RCC_PLLSAI1CFGR]
-    bic r1, (0x7F << RCC_PLLSAI1CFGR_PLLSAI1N)
-    orr r1, (43 << RCC_PLLSAI1CFGR_PLLSAI1N)
-    bic r1, (1 << RCC_PLLSAI1CFGR_PLLSAI1P)
-    str r1, [r0, RCC_PLLSAI1CFGR]
-
-    @ Enable the PLLSAI1 again by setting PLLSAI1ON to 1
-    ldr r1, [r0, RCC_CR]
-    orr r1, (1 << RCC_CR_PLLSAI1ON)
-    str r1, [r0, RCC_CR]
-
-    @ Wait till PLLSAI1 is ready
-    1:
-    ldr r1, [r0, RCC_CR]
-    tst r1, (1 << RCC_CR_PLLSAI1RDY)
-    beq 1b
-
-    @ __HAL_RCC_PLLSAI1CLKOUT_ENABLE
-    ldr r1, [r0, RCC_PLLSAI1CFGR]
-    orr r1, (1 << RCC_PLLSAI1CFGR_PLLSAI1PEN)
-    str r1, [r0, RCC_PLLSAI1CFGR]
-
-    bx lr
-.size RCCEx_PLLSAI1_Config_asm, . - RCCEx_PLLSAI1_Config_asm
-
-
-.type AUDIO_SAIx_Init_asm, %function
-AUDIO_SAIx_Init_asm:
-    push {lr}
-
-    @ __HAL_SAI_DISABLE
-    ldr r0, =SAI1
-    ldr r1, [r0, SAIx_ACR1]
-    bic r1, (1 << SAIx_xCR1_SAIxEN)
-    str r1, [r0, SAIx_ACR1]
-
-    bl HAL_SAI_Init_asm
-
-    @ Enable SAI peripheral to generate MCLK
-    ldr r0, =SAI1
-    ldr r1, [r0, SAIx_ACR1]
-    orr r1, (1 << SAIx_xCR1_SAIxEN)
-    str r1, [r0, SAIx_ACR1]
-
-    pop {lr}
-    bx lr
-.size AUDIO_SAIx_Init_asm, . - AUDIO_SAIx_Init_asm
-
-
-.type HAL_SAI_Init_asm, %function
-HAL_SAI_Init_asm:
-    push {lr}
-
-    bl HAL_SAI_MspInit_asm
-
-    @ SAI_Disable
-    ldr r0, =SAI1
-    ldr r1, [r0, SAIx_ACR1]
-    bic r1, (1 << SAIx_xCR1_SAIxEN)
-    str r1, [r0, SAIx_ACR1]
-
-    @ Wait for reset
-    1:
-    ldr r1, [r0, SAIx_ACR1]
-    tst r1, (1 << SAIx_xCR1_SAIxEN)
-    bne 1b
-
-    @ Set GCR to 0
-    mov r1, 0
-    str r1, [r0, SAIx_GCR]
-
-    @ Configure SAI1 ACR1
-    ldr r1, [r0, SAIx_ACR1]
-    bic r1, (0b11 << SAIx_xCR1_MODE | 0b11 << SAIx_xCR1_PRTCFG | 0b111 << SAIx_xCR1_DS)
-    bic r1, (1 << SAIx_xCR1_LSBFIRST | 0b11 << SAIx_xCR1_SYNCEN)
-    bic r1, (1 << SAIx_xCR1_DMAEN | 1 << SAIx_xCR1_NODIV | 0xF << SAIx_xCR1_MCKDIV)
-    orr r1, (0b100 << SAIx_xCR1_DS)
-    orr r1, (1 << SAIx_xCR1_CKSTR | 1 << SAIx_xCR1_MONO | 1 << SAIx_xCR1_OUTDRIV)
-    orr r1, (0x1 << SAIx_xCR1_MCKDIV)
-    str r1, [r0, SAIx_ACR1]
-
-    @ SAI CR2 Configuration
-    ldr r1, [r0, SAIx_ACR2]
-    bic r1, (0b111 << SAIx_xCR2_FTH | 1 << SAIx_xCR2_FFLUSH)
-    bic r1, (1 << SAIx_xCR2_CPL | 0b11 << SAIx_xCR2_COMP)
-    orr r1, (0b001 << SAIx_xCR2_FTH)
-    str r1, [r0, SAIx_ACR2]
-
-    @ SAI Frame Configuration
-    ldr r1, [r0, SAIx_AFRCR]
-    bic r1, (0xFF << SAIx_xFRCR_FRL)
-    bic r1, (0x7F << SAIx_xFRCR_FSALL)
-    bic r1, (1 << SAIx_xFRCR_FSPOL)
-    orr r1, (0x1F << SAIx_xFRCR_FRL)
-    orr r1, (0x0F << SAIx_xFRCR_FSALL)
-    orr r1, (1 << SAIx_xFRCR_FSDEF | 1 << SAIx_xFRCR_FSOFF)
-    str r1, [r0, SAIx_AFRCR]
-
-    @ SAI Block_x SLOT Configuration
-    ldr r1, [r0, SAIx_ASLOTR]
-    bic r1, (0x1F << SAIx_xSLOTR_FBOFF | 0b11 << SAIx_xSLOTR_SLOTSZ)
-    bic r1, (0xF << SAIx_xSLOTR_NBSLOT)
-    bic r1, (0xFF << SAIx_xSLOTR_SLOTEN)
-    bic r1, (0xFF << (SAIx_xSLOTR_SLOTEN + 8))
-    orr r1, (0x1 << SAIx_xSLOTR_NBSLOT)
-    orr r1, (0x0003 << SAIx_xSLOTR_SLOTEN)
-    str r1, [r0, SAIx_ASLOTR]
-
-    pop {lr}
-    bx lr
-.size HAL_SAI_Init_asm, . - HAL_SAI_Init_asm
-
-
-.type HAL_SAI_MspInit_asm, %function
-HAL_SAI_MspInit_asm:
-    @ Enable SAI clock
-    ldr r0, =RCC
-    ldr r1, [r0, RCC_APB2ENR]
-    orr r1, (1 << RCC_APB2ENR_SAI1EN)
-    str r1, [r0, RCC_APB2ENR]
-
-    @ Enable GPIO clock
-    ldr r1, [r0, RCC_AHB2ENR]
-    orr r1, (1 << RCC_AHB2ENR_GPIOEEN)
-    str r1, [r0, RCC_AHB2ENR]
-
-    @ CODEC_SAI pins configuration: FS, SCK, MCK and SD pins
-    @ FS=E4, SCK=E5, MCK=E2, SD=E6 (from user manual sec.8, fig.12)
-    ldr r0, =GPIOE
-    ldr r1, [r0, GPIOx_MODER]
-    bic r1, (0b11 << 8 | 0b11 << 10 | 0b11 << 12)
-    bic r1, (0b11 << 4)
-    orr r1, (0b10 << 8 | 0b10 << 10 | 0b10 << 12)
-    orr r1, (0b10 << 4)
-    str r1, [r0, GPIOx_MODER]
-    ldr r1, [r0, GPIOx_OTYPER]
-    bic r1, (1 << 2 | 1 << 4 | 1 << 5 | 1 << 6)
-    str r1, [r0, GPIOx_OTYPER]
-    ldr r1, [r0, GPIOx_OSPEEDR]
-    orr r1, (0b11 << 8 | 0b11 << 10 | 0b11 << 12)
-    orr r1, (0b11 << 4)
-    str r1, [r0, GPIOx_OSPEEDR]
-    ldr r1, [r0, GPIOx_PUPDR]
-    bic r1, (0b11 << 8 | 0b11 << 10 | 0b11 << 12)
-    bic r1, (0b11 << 4)
-    str r1, [r0, GPIOx_PUPDR]
-    ldr r1, [r0, GPIOx_AFRL]
-    bic r1, (0xF << 20 | 0xF << 24)
-    orr r1, (0xD << 20 | 0xD << 24)
-    bic r1, (0xF << 16)
-    orr r1, (0xD << 16)
-    bic r1, (0xF << 8)
-    orr r1, (0xD << 8)
-    str r1, [r0, GPIOx_AFRL]
-
-    bx lr
-.size HAL_SAI_MspInit_asm, . - HAL_SAI_MspInit_asm
-
-
-.type cs43l22_drv_ReadID_asm, %function
-cs43l22_drv_ReadID_asm:
-    push {lr}
-
-    bl AUDIO_IO_Init_asm
-
-    mov r0, 1
-    mov r1, 1
-    bl HAL_I2C_Mem_Read_asm
-
-    pop {lr}
-    bx lr
-.size cs43l22_drv_ReadID_asm, . - cs43l22_drv_ReadID_asm
-
-
-.type AUDIO_IO_Init_asm, %function
-AUDIO_IO_Init_asm:
-    push {lr}
-
-    @ Enable Reset GPIO Clock
-    @ no-op (GPIOE already enabled)
-
-    @ Audio reset pin configuration (pin E3, see user manual s.8, fig.12)
-    ldr r0, =GPIOE
-    ldr r1, [r0, GPIOx_MODER]
-    bic r1, (0b11 << 6)
-    orr r1, (0b01 << 6)
-    str r1, [r0, GPIOx_MODER]
-    ldr r1, [r0, GPIOx_OTYPER]
-    bic r1, (1 << 3)
-    str r1, [r0, GPIOx_OTYPER]
-    ldr r1, [r0, GPIOx_OSPEEDR]
-    orr r1, (0b11 << 6)
-    str r1, [r0, GPIOx_OSPEEDR]
-    ldr r1, [r0, GPIOx_PUPDR]
-    bic r1, (0b11 << 6)
-    str r1, [r0, GPIOx_PUPDR]
-
-    bl I2C1_Init_asm
-
-    ldr r0, =GPIOE
-    ldr r1, =(1 << 3)
-    str r1, [r0, GPIOx_BSRR]
-
-    pop {lr}
-    bx lr
-.size AUDIO_IO_Init_asm, . - AUDIO_IO_Init_asm
-
-
-.type I2C1_Init_asm, %function
-I2C1_Init_asm:
-    push {lr}
-
-    bl I2C1_MspInit_asm
-
-    bl HAL_I2C_Init_asm
-
-    pop {lr}
-    bx lr
-.size I2C1_Init_asm, . - I2C1_Init_asm
-
-
-.type I2C1_MspInit_asm, %function
-I2C1_MspInit_asm:
-    push {lr}
-
-    @ IOSV bit MUST be set to access GPIO port G[2:15]
-    @ __HAL_RCC_PWR_CLK_ENABLE
-    ldr r0, =RCC
-    ldr r1, [r0, RCC_APB1ENR1]
-    orr r1, (1 << RCC_APB1ENR1_PWREN)
-    str r1, [r0, RCC_APB1ENR1]
-
-    @ Wait after enabling peripheral clock
-    1:
-    ldr r1, [r0, RCC_APB1ENR1]
-    tst r1, (1 << RCC_APB1ENR1_PWREN)
-    beq 1b
-
-    @ HAL_PWREx_EnableVddIO2
-    ldr r0, =PWR
-    ldr r1, [r0, PWR_CR2]
-    orr r1, (1 << PWR_CR2_IOSV)
-    str r1, [r0, PWR_CR2]
-
-    @ Configure the Discovery I2C clock source. The clock is derived from the SYSCLK
-    ldr r0, =RCC
-    ldr r1, [r0, RCC_CCIPR]
-    bic r1, (0b11 << RCC_CCIPR_I2C1SEL)
-    orr r1, (0b01 << RCC_CCIPR_I2C1SEL)
-    str r1, [r0, RCC_CCIPR]
-
-    @ Configure the GPIOs
-    ldr r1, [r0, RCC_AHB2ENR]
-    orr r1, (1 << RCC_AHB2ENR_GPIOBEN)
-    str r1, [r0, RCC_AHB2ENR]
-
-    @ Configure I2C Rx/Tx as alternate function (B6, B7)
-    ldr r0, =GPIOB
-    ldr r1, [r0, GPIOx_MODER]
-    bic r1, (0b11 << 12 | 0b11 << 14)
-    orr r1, (0b10 << 12 | 0b10 << 14)
-    str r1, [r0, GPIOx_MODER]
-    ldr r1, [r0, GPIOx_OTYPER]
-    orr r1, (1 << 6 | 1 << 7)
-    str r1, [r0, GPIOx_OTYPER]
-    ldr r1, [r0, GPIOx_OSPEEDR]
-    orr r1, (0b11 << 12 | 0b11 << 14)
-    str r1, [r0, GPIOx_OSPEEDR]
-    ldr r1, [r0, GPIOx_PUPDR]
-    bic r1, (0b11 << 12 | 0b11 << 14)
-    orr r1, (0b01 << 12 | 0b01 << 14)
-    str r1, [r0, GPIOx_PUPDR]
-    ldr r1, [r0, GPIOx_AFRL]
-    bic r1, (0xF << 24 | 0xF << 28)
-    orr r1, (0x4 << 24 | 0x4 << 28)
-    str r1, [r0, GPIOx_AFRL]
-
-    @ Configure the Discovery I2C1 peripheral
-    @ Enable Discovery I2C1 clock
-    ldr r0, =RCC
-    ldr r1, [r0, RCC_APB1ENR1]
-    orr r1, (1 << RCC_APB1ENR1_I2C1EN)
-    str r1, [r0, RCC_APB1ENR1]
-
-    @ Wait after enabling peripheral clock
-    1:
-    ldr r1, [r0, RCC_APB1ENR1]
-    tst r1, (1 << RCC_APB1ENR1_I2C1EN)
-    beq 1b
-
-    @ Force and release the I2C Peripheral Clock Reset
-    ldr r1, [r0, RCC_APB1RSTR1]
-    orr r1, (1 << RCC_APB1RSTR1_I2C1RST)
-    str r1, [r0, RCC_APB1RSTR1]
-    ldr r1, [r0, RCC_APB1RSTR1]
-    bic r1, (1 << RCC_APB1RSTR1_I2C1RST)
-    str r1, [r0, RCC_APB1RSTR1]
-
-    @ Enable and set Discovery I2C1 Interrupt to the highest priority
-    ldr r0, =NVIC
-    ldr r1, [r0, NVIC_IPR7]
-    bic r1, (0xF << 28) @ interrupt 31 = (4 * 7) + 3
-    str r1, [r0, NVIC_IPR7]
-    ldr r1, [r0, NVIC_ISER0]
-    orr r1, (1 << 31)
-    str r1, [r0, NVIC_ISER0]
-
-    @ Enable and set Discovery I2C1 Event Interrupt to the highest priority
-    ldr r1, [r0, NVIC_IPR8]
-    bic r1, (0xF << 4) @ interrupt 32 = (4 * 8) + 0
-    str r1, [r0, NVIC_IPR8]
-    ldr r1, [r0, NVIC_ISER1]
-    orr r1, (1 << 0)
-    str r1, [r0, NVIC_ISER1]
-
-    pop {lr}
-    bx lr
-.size I2C1_MspInit_asm, . - I2C1_MspInit_asm
-
-
-.type HAL_I2C_Init_asm, %function
-HAL_I2C_Init_asm:
-    push {lr}
-
-    @ __HAL_I2C_DISABLE
-    ldr r0, =I2C1
-    ldr r1, [r0, I2Cx_CR1]
-    bic r1, (1 << I2Cx_CR1_PE)
-    str r1, [r0, I2Cx_CR1]
-
-    @ Configure I2Cx: Frequency range
-    ldr r1, =0x90112626
-    str r1, [r0, I2Cx_TIMINGR]
-
-    @ Disable Own Address1 before set the Own Address1 configuration
-    ldr r1, [r0, I2Cx_OAR1]
-    bic r1, (1 << I2Cx_OAR1_OA1EN)
-    str r1, [r0, I2Cx_OAR1]
-
-    @ Configure I2Cx: Own Address1 and ack own address1 mode
-    ldr r1, =0x00008000
-    str r1, [r0, I2Cx_OAR1]
-
-    @ Configure I2Cx: Addressing Master mode
-    @ Enable the AUTOEND by default, and enable NACK (should be disable only during Slave process
-    ldr r1, [r0, I2Cx_CR2]
-    orr r1, (1 << I2Cx_CR2_AUTOEND)
-    orr r1, (1 << I2Cx_CR2_NACK)
-    str r1, [r0, I2Cx_CR2]
-
-    @ Disable Own Address2 before set the Own Address2 configuration
-    ldr r1, [r0, I2Cx_OAR2]
-    bic r1, (1 << I2Cx_OAR2_OA2EN)
-    str r1, [r0, I2Cx_OAR2]
-
-    @ Configure I2Cx: Dual mode and Own Address2
-    ldr r1, =0
-    str r1, [r0, I2Cx_OAR2]
-
-    @ Configure I2Cx: Generalcall and NoStretch mode
-    ldr r1, =0
-    str r1, [r0, I2Cx_CR1]
-
-    @ Enable the selected I2C peripheral
-    ldr r1, [r0, I2Cx_CR1]
-    orr r1, (1 << I2Cx_CR1_PE)
-    str r1, [r0, I2Cx_CR1]
-
-    pop {lr}
-    bx lr
-.size HAL_I2C_Init_asm, . - HAL_I2C_Init_asm
-
-
-/**
- * @param r0 - MemAddress
- * @param r1 - MemAddSize
- */
-.type HAL_I2C_Mem_Read_asm, %function
-HAL_I2C_Mem_Read_asm:
-    push {r4-r5, lr}
-
-    mov r4, r0
-    mov r5, r1
-
-    mov r0, (1 << I2Cx_ISR_BUSY)
-    bl wait_for_I2Cx_flag_reset
-
-    mov r0, r4
-    mov r1, r5
-    bl I2C_RequestMemoryRead_asm
-
-    mov r0, 1
-    mov r1, (1 << I2Cx_CR2_AUTOEND)
-    mov r2, 0x80000000
-    orr r2, (1 << I2Cx_CR2_START | 1 << I2Cx_CR2_RD_WRN)
-    bl I2C_TransferConfig_asm
-
-    mov r0, (1 << I2Cx_ISR_RXNE)
-    bl wait_for_I2C1_flag_set
-
-    ldr r0, =I2C1
-    ldr r4, [r0, I2Cx_RXDR]
-
-    mov r0, (1 << I2Cx_ISR_STOPF)
-    bl wait_for_I2C1_flag_set
-
-    bl __HAL_I2C_CLEAR_STOP_FLAG_asm
-
-    bl I2C_RESET_CR2_asm
-
-    mov r0, r4
-    pop {r4-r5, lr}
-    bx lr
-.size HAL_I2C_Mem_Read_asm, . - HAL_I2C_Mem_Read_asm
-
-
-/**
- * @param r0 - MemAddress
- * @param r1 - MemAddSize
- */
-.type I2C_RequestMemoryRead_asm, %function
-I2C_RequestMemoryRead_asm:
-    push {r4, lr}
-
-    and r4, r0, 0xFF
-
-    mov r0, r1
-    mov r1, 0
-    ldr r2, =(0x80000000 | 1 << 13)
-    bl I2C_TransferConfig_asm
-
-    mov r0, (1 << I2Cx_ISR_TXIS)
-    bl wait_for_I2C1_flag_set
-
-    ldr r0, =I2C1
-    str r4, [r0, I2Cx_TXDR]
-
-    mov r0, (1 << I2Cx_ISR_TC)
-    bl wait_for_I2C1_flag_set
-
-    pop {r4, lr}
-    bx lr
-.size I2C_RequestMemoryRead_asm, . - I2C_RequestMemoryRead_asm
-
-
-/**
- * @param r0 - Size
- * @param r1 - Mode
- * @param r2 - Request
- */
-.type I2C_TransferConfig_asm, %function
-I2C_TransferConfig_asm:
-    push {r4-r5}
-    ldr r3, =I2C1
-    ldr r4, [r3, I2Cx_CR2]
-
-    bic r4, (0xFF << I2Cx_CR2_SADD0)
-    bic r4, (1 << I2Cx_CR2_START | 1 << I2Cx_CR2_STOP | 0x3 << (I2Cx_CR2_SADD0 + 8))
-    bic r4, (0xFF << I2Cx_CR2_NBYTES)
-    bic r4, (1 << I2Cx_CR2_RELOAD | 1 << I2Cx_CR2_AUTOEND)
-
-    lsl r5, r2, 21 @ 31 - I2Cx_CR2_RD_WRN
-    and r5, (1 << I2Cx_CR2_RD_WRN)
-    bic r4, r5
-
-    orr r4, (0x94 << I2Cx_CR2_SADD0)
-    lsl r0, 16 @ I2Cx_CR2_NBYTES
-    orr r4, r0
-    orr r4, r1
-    orr r4, r2
-
-    str r4, [r3, I2Cx_CR2]
-    pop {r4-r5}
-    bx lr
-.size I2C_TransferConfig_asm, . - I2C_TransferConfig_asm
-
-
-/**
- * Delays execution until the specified flag is set in
- * the I2C1_ISR register.
- *
- * @param r0 - flag
- */
-.type wait_for_I2C1_flag_set, %function
-wait_for_I2C1_flag_set:
-    ldr r2, =I2C1
-    1:
-    ldr r1, [r2, I2Cx_ISR]
-    tst r1, r0
-    beq 1b
-    bx lr
-.size wait_for_I2C1_flag_set, . - wait_for_I2C1_flag_set
-
-
-/**
- * Delays execution until the specified flag is reset / clear
- * in the I2C1_ISR register.
- *
- * @param r0 - flag
- */
-.type wait_for_I2Cx_flag_reset, %function
-wait_for_I2Cx_flag_reset:
-    ldr r2, =I2C1
-    1:
-    ldr r1, [r2, I2Cx_ISR]
-    tst r1, r0
-    bne 1b
-    bx lr
-.size wait_for_I2Cx_flag_reset, . - wait_for_I2Cx_flag_reset
-
-
-.type __HAL_I2C_CLEAR_STOP_FLAG_asm, %function
-__HAL_I2C_CLEAR_STOP_FLAG_asm:
-    ldr r0, =I2C1
-    mov r1, (1 << I2Cx_ICR_STOPF)
-    str r1, [r0, I2Cx_ICR]
-    bx lr
-.size __HAL_I2C_CLEAR_STOP_FLAG_asm, . - __HAL_I2C_CLEAR_STOP_FLAG_asm
-
-
-.type I2C_RESET_CR2_asm, %function
-I2C_RESET_CR2_asm:
-    ldr r0, =I2C1
-    ldr r1, [r0, I2Cx_CR2]
-    ldr r2, 1f
-    bic r1, r2
-    str r1, [r0, I2Cx_CR2]
-    bx lr
-    1:
-    .word (0x3FF << I2Cx_CR2_SADD0 \
-        | 1 << I2Cx_CR2_HEAD10R \
-        | 0xFF << I2Cx_CR2_NBYTES \
-        | 1 << I2Cx_CR2_RELOAD \
-        | 1 << I2Cx_CR2_RD_WRN)
-.size I2C_RESET_CR2_asm, . - I2C_RESET_CR2_asm
-
-
-.type cs43l22_Init_asm, %function
-cs43l22_Init_asm:
-    push {lr}
-
-    mov r0, 0x02
-    mov r1, 0x01
-    bl AUDIO_IO_Write_asm
-
-    mov r0, 0x04
-    mov r1, 0xAF
-    bl AUDIO_IO_Write_asm
-
-    mov r0, 0x05
-    mov r1, 0x81
-    bl AUDIO_IO_Write_asm
-
-    mov r0, 0x06
-    mov r1, 0x04
-    bl AUDIO_IO_Write_asm
-
-    mov r0, 60 // VOLUME
-    bl cs43l22_SetVolume_asm
-
-    mov r0, 0x0A
-    mov r1, 0x00
-    bl AUDIO_IO_Write_asm
-
-    mov r0, 0x0E
-    mov r1, 0x04
-    bl AUDIO_IO_Write_asm
-
-    mov r0, 0x27
-    mov r1, 0x00
-    bl AUDIO_IO_Write_asm
-
-    mov r0, 0x1F
-    mov r1, 0x0F
-    bl AUDIO_IO_Write_asm
-
-    mov r0, 0x1A
-    mov r1, 0x0A
-    bl AUDIO_IO_Write_asm
-
-    mov r0, 0x1B
-    mov r1, 0x0A
-    bl AUDIO_IO_Write_asm
-
-    mov r0, 0x0E
-    mov r1, 0x06
-    bl AUDIO_IO_Write_asm
-
-    mov r0, 0x02
-    mov r1, 0x9E
-    bl AUDIO_IO_Write_asm
-
-    pop {lr}
-    bx lr
-.size cs43l22_Init_asm, . - cs43l22_Init_asm
-
-
-/**
- * @param r0 - Volume (0--100)
- */
-.type cs43l22_SetVolume_asm, %function
-cs43l22_SetVolume_asm:
-    push {r4, lr}
-
-    cmp r0, 100
-    bgt volume_error
-
-    mov r1, 255
-    mov r2, 100
-    mul r0, r1
-    udiv r0, r2
-
-    cmp r0, 0xE6
-    ble 1f
-    sub r4, r0, 0xE7
-    b 2f
-    1:
-    add r4, r0, 0x19
     2:
+    @ Device ID wrong
+    nop
+    b 2b
 
-    mov r0, 0x20
-    mov r1, r4
-    bl AUDIO_IO_Write_asm
-
-    mov r0, 0x21
-    mov r1, r4
-    bl AUDIO_IO_Write_asm
-
-    pop {r4, lr}
-    bx lr
-
-    volume_error:
-    b volume_error
-.size cs43l22_SetVolume_asm, . - cs43l22_SetVolume_asm
+    3:
+    @ Device revision level unexpected
+    nop
+    b 3b
+.size cs43l22_verify, . - cs43l22_verify
 
 
 /**
- * @param r0 - Reg
- * @param r1 - Value
+ * Reads the value at the provided address
+ * @param r0 - address to read from
+ * @returns r0 - byte value at address
  */
-.type AUDIO_IO_Write_asm, %function
-AUDIO_IO_Write_asm:
-    push {r4-r5, lr}
-    mov r2, r1
+.global cs43l22_read
+.type cs43l22_read, %function
+cs43l22_read:
+    mov r3, r0
 
-    mov r4, r0
-    mov r5, r2
-
-    mov r0, (1 << I2Cx_ISR_BUSY)
-    bl wait_for_I2Cx_flag_reset
-
-    mov r0, r4
-    mov r1, 1
-    bl I2C_RequestMemoryWrite_asm
-
-    mov r0, 1
-    mov r1, (1 << I2Cx_CR2_AUTOEND)
-    mov r2, 0
-    bl I2C_TransferConfig_asm
-
-    mov r0, (1 << I2Cx_ISR_TXIS)
-    bl wait_for_I2C1_flag_set
-
+    @ Program I2C1 to send to CS43L22
     ldr r0, =I2C1
-    str r5, [r0, I2Cx_TXDR]
+    ldr r1, [r0, I2Cx_CR2]
+    bic r1, (1 << I2Cx_CR2_RELOAD)
+    bic r1, (1 << I2Cx_CR2_AUTOEND)
+    bic r1, (1 << I2Cx_CR2_ADD10)     @ it has a 7 bit address
+    .set TMP, 0x3FF << I2Cx_CR2_SADD0 @ set 7 bit address to 0x94 (from user manual)
+    ldr r2, =TMP
+    bic r1, r2
+    orr r1, (0x94 << I2Cx_CR2_SADD0)
+    bic r1, (1 << I2Cx_CR2_RD_WRN)    @ request a send (sending address)
+    bic r1, (0xFF << I2Cx_CR2_NBYTES) @ send 1 byte
+    orr r1, (1 << I2Cx_CR2_NBYTES)
+    str r1, [r0, I2Cx_CR2]
 
-    mov r0, (1 << I2Cx_ISR_STOPF)
-    bl wait_for_I2C1_flag_set
+    @ Send request
+    ldr r1, [r0, I2Cx_CR2]
+    orr r1, (1 << I2Cx_CR2_START)
+    str r1, [r0, I2Cx_CR2]
 
-    bl __HAL_I2C_CLEAR_STOP_FLAG_asm
+    @ Wait for ready to send address
+    1:
+    ldr r1, [r0, I2Cx_ISR]
+    tst r1, (1 << I2Cx_ISR_TXIS)
+    beq 1b
 
-    bl I2C_RESET_CR2_asm
+    @ Send address to read from
+    str r3, [r0, I2Cx_TXDR]
 
-    pop {r4-r5, lr}
+    @ Wait for transfer to complete
+    1:
+    ldr r1, [r0, I2Cx_ISR]
+    tst r1, (1 << I2Cx_ISR_TC)
+    beq 1b
+
+    @ Program I2C1 to read from CS43L22
+    ldr r0, =I2C1
+    ldr r1, [r0, I2Cx_CR2]
+    @ The address & NBYTES has already been configured above
+    orr r1, (1 << I2Cx_CR2_AUTOEND)   @ automatically send stop & NACK reply
+    orr r1, (1 << I2Cx_CR2_RD_WRN)    @ request a read
+    str r1, [r0, I2Cx_CR2]
+
+    @ Send request
+    ldr r1, [r0, I2Cx_CR2]
+    orr r1, (1 << I2Cx_CR2_START)
+    str r1, [r0, I2Cx_CR2]
+
+    @ Wait for reply to arrive
+    @ NOTE: Do not pause and have debugger I2C1 open, as it will read RXDR and reset the flag
+    1:
+    ldr r1, [r0, I2Cx_ISR]
+    tst r1, (1 << I2Cx_ISR_RXNE)
+    beq 1b
+
+    @ Read reply
+    ldr r0, [r0, I2Cx_RXDR]
+
+    @ Clear stop flag
+    ldr r2, =I2C1
+    mov r1, (1 << I2Cx_ICR_STOPF)
+    str r1, [r2, I2Cx_ICR]
+
     bx lr
-.size AUDIO_IO_Write_asm, . - AUDIO_IO_Write_asm
+.size cs43l22_read, . - cs43l22_read
 
 
 /**
- * @param r0 - MemAddress
- * @param r1 - MemAddSize
+ * Writes the value to the provided address
+ *
+ * @param r0 - address to send to
+ * @param r1 - byte data to send
  */
-.type I2C_RequestMemoryWrite_asm, %function
-I2C_RequestMemoryWrite_asm:
-    push {r4, lr}
-    mov r4, r0
+.global cs43l22_write
+.type cs43l22_write, %function
+cs43l22_write:
+    mov r2, r0
+    mov r3, r1
 
-    mov r0, r1
-    mov r1, (1 << I2Cx_CR2_RELOAD)
-    ldr r2, =(0x80000000)
-    orr r2, (1 << I2Cx_CR2_START)
-    bl I2C_TransferConfig_asm
-
-    mov r0, (1 << I2Cx_ISR_TXIS)
-    bl wait_for_I2C1_flag_set
-
+    @ Program I2C1 to send to CS43L22
     ldr r0, =I2C1
-    and r1, r4, 0xFF
-    str r1, [r0, I2Cx_TXDR]
+    ldr r1, [r0, I2Cx_CR2]
+    bic r1, (1 << I2Cx_CR2_RELOAD)
+    orr r1, (1 << I2Cx_CR2_AUTOEND)
+    bic r1, (1 << I2Cx_CR2_ADD10)     @ it has a 7 bit address
+    bic r1, (0xFF << I2Cx_CR2_SADD0)  @ set 7 bit address to 0x94 (from user manual)
+    orr r1, (0x94 << I2Cx_CR2_SADD0)
+    bic r1, (1 << I2Cx_CR2_RD_WRN)    @ request a send (sending address)
+    bic r1, (0xFF << I2Cx_CR2_NBYTES) @ send 2 bytes
+    orr r1, (2 << I2Cx_CR2_NBYTES)
+    str r1, [r0, I2Cx_CR2]
 
-    mov r0, (1 << I2Cx_ISR_TCR)
-    bl wait_for_I2C1_flag_set
+    @ Send request
+    ldr r1, [r0, I2Cx_CR2]
+    orr r1, (1 << I2Cx_CR2_START)
+    str r1, [r0, I2Cx_CR2]
 
-    pop {r4, lr}
+    @ Wait for ready to send address
+    1:
+    ldr r1, [r0, I2Cx_ISR]
+    tst r1, (1 << I2Cx_ISR_TXIS)
+    beq 1b
+
+    @ Send address to write to
+    str r2, [r0, I2Cx_TXDR]
+
+    @ Wait for ready to send data
+    1:
+    ldr r1, [r0, I2Cx_ISR]
+    tst r1, (1 << I2Cx_ISR_TXIS)
+    beq 1b
+
+    @ Send data
+    str r3, [r0, I2Cx_TXDR]
+
+    @ Clear stop flag
+    ldr r2, =I2C1
+    mov r1, (1 << I2Cx_ICR_STOPF)
+    str r1, [r2, I2Cx_ICR]
+
     bx lr
-.size I2C_RequestMemoryWrite_asm, . - I2C_RequestMemoryWrite_asm
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+.size cs43l22_write, . - cs43l22_write
 
 
 @@@@@@@@@@@@@@@
 @@ Constants @@
 @@@@@@@@@@@@@@@
 
-.equiv I2C1, 0x40005400
-    .equiv I2Cx_CR1, 0x00
-        .equiv I2Cx_CR1_PE, 0
-        .equiv I2Cx_CR1_TXIE, 1
-        .equiv I2Cx_CR1_RXIE, 2
-        .equiv I2Cx_CR1_ADDRIE, 3
-        .equiv I2Cx_CR1_NACKIE, 4
-        .equiv I2Cx_CR1_STOPIE, 5
-        .equiv I2Cx_CR1_TCIE, 6
-        .equiv I2Cx_CR1_ERRIE, 7
-        .equiv I2Cx_CR1_DNF, 8 @ [4]
-        .equiv I2Cx_CR1_ANFOFF, 12
-        .equiv I2Cx_CR1_TXDMAEN, 14
-        .equiv I2Cx_CR1_RXDMAEN, 15
-        .equiv I2Cx_CR1_SBC, 16
-        .equiv I2Cx_CR1_NOSTRETCH, 17
-        .equiv I2Cx_CR1_WUPEN, 18
-        .equiv I2Cx_CR1_GCEN, 19
-        .equiv I2Cx_CR1_SMBHEN, 20
-        .equiv I2Cx_CR1_SMBDEN, 21
-        .equiv I2Cx_CR1_ALERTEN, 22
-        .equiv I2Cx_CR1_PECEN, 23
-    .equiv I2Cx_CR2, 0x04
-        .equiv I2Cx_CR2_SADD0, 0
-        .equiv I2Cx_CR2_SADD, 1 @ [9]
-        .equiv I2Cx_CR2_RD_WRN, 10
-        .equiv I2Cx_CR2_ADD10, 11
-        .equiv I2Cx_CR2_HEAD10R, 12
-        .equiv I2Cx_CR2_START, 13
-        .equiv I2Cx_CR2_STOP, 14
-        .equiv I2Cx_CR2_NACK, 15
-        .equiv I2Cx_CR2_NBYTES, 16 @ [8]
-        .equiv I2Cx_CR2_RELOAD, 24
-        .equiv I2Cx_CR2_AUTOEND, 25
-        .equiv I2Cx_CR2_PECBYTE, 26
-    .equiv I2Cx_OAR1, 0x08
-        .equiv I2Cx_OAR1_OA1EN, 15
-    .equiv I2Cx_OAR2, 0x0C
-        .equiv I2Cx_OAR2_OA2, 1 @ [7]
-        .equiv I2Cx_OAR2_OA2MSK, 8 @ [3]
-        .equiv I2Cx_OAR2_OA2EN, 15
-    .equiv I2Cx_TIMINGR, 0x10
-    .equiv I2Cx_TIMEOUTR, 0x14
-    .equiv I2Cx_ISR, 0x18
-        .equiv I2Cx_ISR_TXIS, 1
-        .equiv I2Cx_ISR_RXNE, 2
-        .equiv I2Cx_ISR_STOPF, 5
-        .equiv I2Cx_ISR_TC, 6
-        .equiv I2Cx_ISR_TCR, 7
-        .equiv I2Cx_ISR_BUSY, 15
-    .equiv I2Cx_ICR, 0x1C
-        .equiv I2Cx_ICR_STOPF, 5
-    .equiv I2Cx_PECR, 0x20
-    .equiv I2Cx_RXDR, 0x24
-    .equiv I2Cx_TXDR, 0x28
-.equiv PWR, 0x40007000
-    .equiv PWR_CR1, 0x00
-        .equiv PWR_CR1_VOS, 9 @ [2] Voltage range
-    .equiv PWR_CR2, 0x04
-        .equiv PWR_CR2_IOSV, 9
-    .equiv PWR_SR2, 0x14
-        .equiv PWR_SR2_VOSF, 10
-.equiv SAI1, 0x40015400
-    .equiv SAIx_GCR, 0x0
-    .equiv SAIx_ACR1, 0x4
-        .equiv SAIx_xCR1_MODE,     0
-        .equiv SAIx_xCR1_PRTCFG,   2 @ [2]
-        .equiv SAIx_xCR1_DS,       5 @ [3]
-        .equiv SAIx_xCR1_LSBFIRST, 8
-        .equiv SAIx_xCR1_CKSTR,    9
-        .equiv SAIx_xCR1_SYNCEN,  10 @ [2]
-        .equiv SAIx_xCR1_MONO,    12
-        .equiv SAIx_xCR1_OUTDRIV, 13
-        .equiv SAIx_xCR1_SAIxEN,  16
-        .equiv SAIx_xCR1_DMAEN,   17
-        .equiv SAIx_xCR1_NODIV,   19
-        .equiv SAIx_xCR1_MCKDIV,  20 @ [4]
-    .equiv SAIx_ACR2, 0x8
-        .equiv SAIx_xCR2_FTH,     0 @ [3]
-        .equiv SAIx_xCR2_FFLUSH,  3
-        .equiv SAIx_xCR2_TRIS,    4
-        .equiv SAIx_xCR2_MUTE,    5
-        .equiv SAIx_xCR2_MUTEVAL, 6
-        .equiv SAIx_xCR2_MUTECNT, 7 @ [6]
-        .equiv SAIx_xCR2_CPL,    13
-        .equiv SAIx_xCR2_COMP,   14 @ [2]
-    .equiv SAIx_AFRCR, 0xC
-        .equiv SAIx_xFRCR_FRL,    0 @ [8]
-        .equiv SAIx_xFRCR_FSALL,  8 @ [7]
-        .equiv SAIx_xFRCR_FSDEF, 16
-        .equiv SAIx_xFRCR_FSPOL, 17
-        .equiv SAIx_xFRCR_FSOFF, 18
-    .equiv SAIx_ASLOTR, 0x10
-        .equiv SAIx_xSLOTR_FBOFF, 0 @ [5]
-        .equiv SAIx_xSLOTR_SLOTSZ, 6 @ [2]
-        .equiv SAIx_xSLOTR_NBSLOT, 8 @ [4]
-        .equiv SAIx_xSLOTR_SLOTEN, 16 @ [16]
-    .equiv SAIx_ASR, 0x18
-        .equiv SAIx_xSR_FLVL, 16 @ [3]
-    .equiv SAIx_ADR, 0x20
-.equiv RCC, 0x40021000
-    .equiv RCC_CR, 0x00
-        .equiv RCC_CR_MSION,       0 @ MSI enable
-        .equiv RCC_CR_MSIRDY,      1 @ MSI clock ready
-        .equiv RCC_CR_MSIPLLEN,    2 @ MSI clock PLL enable
-        .equiv RCC_CR_MSIRGSEL,    3 @ MSI clock range selection
-        .equiv RCC_CR_MSIRANGE,    4 @ [4] MSI clock ranges
-        .equiv RCC_CR_HSION,       8 @ HSI16 clock enable
-        .equiv RCC_CR_HSIKERON,    9 @ HSI16 always enable for peripheral kernels
-        .equiv RCC_CR_HSIRDY,     10 @ HSI16 clock ready
-        .equiv RCC_CR_HSIASFS,    11 @ HSI16 automatic start from stop
-        .equiv RCC_CR_HSEON,      16 @ HSE clock enable
-        .equiv RCC_CR_HSERDY,     17 @ HSE clock ready
-        .equiv RCC_CR_HSEBYP,     18 @ HSE crystal oscillator bypass
-        .equiv RCC_CR_CSSON,      19 @ Clock security system enable
-        .equiv RCC_CR_PLLON,      24 @ Main PLL enable
-        .equiv RCC_CR_PLLRDY,     25 @ Main PLL clock ready
-        .equiv RCC_CR_PLLSAI1ON,  26 @ SAI1 PLL enable
-        .equiv RCC_CR_PLLSAI1RDY, 27 @ SAI1 PLL clock ready
-        .equiv RCC_CR_PLLSAI2ON,  28 @ SAI2 PLL enable
-        .equiv RCC_CR_PLLSAI2RDY, 29 @ SAI2 PLL clock ready
-    .equiv RCC_ICSCR, 0x04
-        .equiv RCC_ICSCR_MSICAL,   0 @ [8] MSI clock calibration
-        .equiv RCC_ICSCR_MSITRIM,  8 @ [8] MSI clock trimming
-        .equiv RCC_ICSCR_HSICAL,  16 @ [8] HSI16 clock calibration
-        .equiv RCC_ICSCR_HSITRIM, 24 @ [5] HSI16 clock trimming
-    .equiv RCC_CFGR, 0x08
-        .equiv RCC_CFGR_SW,        0 @ [2] System clock switch
-        .equiv RCC_CFGR_SWS,       2 @ [2] System clock switch status
-        .equiv RCC_CFGR_HPRE,      4 @ [4] AHB prescaler
-        .equiv RCC_CFGR_PPRE1,     8 @ [3] APB low-speed prescaler (APB1)
-        .equiv RCC_CFGR_PPRE2,    11 @ [3] APB high-speed prescaler (APB2)
-        .equiv RCC_CFGR_STOPWUCK, 15 @ Wakeup from Stop and CSS backup clock selection
-        .equiv RCC_CFGR_MCOSEL,   24 @ [3] Microcontroller clock output
-        .equiv RCC_CFGR_MCOPRE,   28 @ [3] Microcontroller clock output prescaler
-    .equiv RCC_PLLCFGR, 0x0C
-        .equiv RCC_PLLCFGR_PLLSRC,  0 @ [2] Main PLL, PLLSAI1, and PLLSAI2 entry clock source
-        .equiv RCC_PLLCFGR_PLLM,    4 @ [3] Division factor for the main PLL and audio PLL input clock
-        .equiv RCC_PLLCFGR_PLLN,    8 @ [7] Main PLL multiplication factor for VCO
-        .equiv RCC_PLLCFGR_PLLPEN, 16 @ Main PLL PLLSAI3CLK output enable
-        .equiv RCC_PLLCFGR_PLLP,   17 @ Main PLL division factor for PLLSAI3CLK (SAI1 & SAI2 clock)
-        .equiv RCC_PLLCFGR_PLLQEN, 20 @ Main PLL PLL48M1CLK output enable
-        .equiv RCC_PLLCFGR_PLLQ,   21 @ [2] Main PLL division factor for PLL48M1CLK (48 MHz clock)
-        .equiv RCC_PLLCFGR_PLLREN, 24 @ Main PLL PLLCLK output enable
-        .equiv RCC_PLLCFGR_PLLR,   25 @ [2] Main PLL division factor for PLLCLK (system clock)
-    .equiv RCC_PLLSAI1CFGR, 0x10
-        .equiv RCC_PLLSAI1CFGR_PLLSAI1N,    8 @ [7] SAI1PLL multiplication factor for VCO
-        .equiv RCC_PLLSAI1CFGR_PLLSAI1PEN, 16 @ SAI1PLL PLLSAI1CLK output enable
-        .equiv RCC_PLLSAI1CFGR_PLLSAI1P,   17 @ SAI1PLL division factor for PLLSAI1CLK (SAI1 or SAI2 clock)
-        .equiv RCC_PLLSAI1CFGR_PLLSAI1QEN, 20 @ SAI1PLL PLL48M2CLK output enable
-        .equiv RCC_PLLSAI1CFGR_PLLSAI1Q,   21 @ [2] SAI1PLL division factor for PLL48M2CLK (48 MHz clock)
-        .equiv RCC_PLLSAI1CFGR_PLLSAI1REN, 24 @ PLLSAI1 PLLADC1CLK output enable
-        .equiv RCC_PLLSAI1CFGR_PLLSAI1R,   25 @ [2] PLLSAI1 division factor for PLLADC1CLK (ADC clock)
-    .equiv RCC_PLLSAI2CFGR, 0x14
-        .equiv RCC_PLLSAI2CFGR_PLLSAI2N,    8 @ [7] SAI2PLL multiplication factor for VCO
-        .equiv RCC_PLLSAI2CFGR_PLLSAI2PEN, 16 @ SAI2PLL PLLSAI2CLK output enable
-        .equiv RCC_PLLSAI2CFGR_PLLSAI2P,   17 @ [2] SAI2PLL division factor for PLLSAI2CLK (SAI1 or SAI2 clock)
-        .equiv RCC_PLLSAI2CFGR_PLLSAI2REN, 24 @ PLLSAI2 PLLADC2CLK output enable
-        .equiv RCC_PLLSAI2CFGR_PLLSAI2R,   25 @ [2] PLLSAI2 division factor for PLLADC2CLK (ADC clock)
-    .equiv RCC_CIER, 0x18
-        .equiv RCC_CIER_LSIRDYIE,     0 @ LSI ready interrupt enable
-        .equiv RCC_CIER_LSERDYIE,     1 @ LSE ready interrupt enable
-        .equiv RCC_MSIRDYIE,          2 @ MSI ready interrupt enable
-        .equiv RCC_CIER_HSIRDYIE,     3 @ HSI16 ready interrupt enable
-        .equiv RCC_CIER_HSERDYIE,     4 @ HSE ready interrupt enable
-        .equiv RCC_CIER_PLLRDYIE,     5 @ PLL ready interrupt enable
-        .equiv RCC_CIER_PLLSAI1RDYIE, 6 @ PLLSAI1 ready interrupt enable
-        .equiv RCC_CIER_PLLSAI2RDYIE, 7 @ PLLSAI2 ready interrupt enable
-        .equiv RCC_CIER_LSECSSIE,     9 @ LSE clock security system interrupt enable
-    .equiv RCC_CIFR, 0x1C
-        .equiv RCC_CIER_LSIRDYF,     0 @ LSI ready interrupt flag
-        .equiv RCC_CIER_LSERDYF,     1 @ LSE ready interrupt flag
-        .equiv RCC_MSIRDYF,          2 @ MSI ready interrupt flag
-        .equiv RCC_CIER_HSIRDYF,     3 @ HSI16 ready interrupt flag
-        .equiv RCC_CIER_HSERDYF,     4 @ HSE ready interrupt flag
-        .equiv RCC_CIER_PLLRDYF,     5 @ PLL ready interrupt flag
-        .equiv RCC_CIER_PLLSAI1RDYF, 6 @ PLLSAI1 ready interrupt flag
-        .equiv RCC_CIER_PLLSAI2RDYF, 7 @ PLLSAI2 ready interrupt flag
-        .equiv RCC_CIER_LSECSSF,     9 @ LSE clock security system interrupt flag
-    .equiv RCC_CICR, 0x20
-        .equiv RCC_CIER_LSIRDYC,     0 @ LSI ready interrupt clear
-        .equiv RCC_CIER_LSERDYC,     1 @ LSE ready interrupt clear
-        .equiv RCC_CIER_MSIRDYC,     2 @ MSI ready interrupt clear
-        .equiv RCC_CIER_HSIRDYC,     3 @ HSI16 ready interrupt clear
-        .equiv RCC_CIER_HSERDYC,     4 @ HSE ready interrupt clear
-        .equiv RCC_CIER_PLLRDYC,     5 @ PLL ready interrupt clear
-        .equiv RCC_CIER_PLLSAI1RDYC, 6 @ PLLSAI1 ready interrupt clear
-        .equiv RCC_CIER_PLLSAI2RDYC, 7 @ PLLSAI2 ready interrupt clear
-        .equiv RCC_CIER_LSECSSC,     9 @ LSE clock security system interrupt clear
-    .equiv RCC_APB1RSTR1, 0x38
-        .equiv RCC_APB1RSTR1_I2C1RST, 21
-    .equiv RCC_AHB2ENR, 0x4C
-        .equiv RCC_AHB2ENR_GPIOBEN, 1
-        .equiv RCC_AHB2ENR_GPIOEEN, 4
-    .equiv RCC_APB1ENR1, 0x58
-        .equiv RCC_APB1ENR1_I2C1EN, 21
-        .equiv RCC_APB1ENR1_PWREN, 28
-    .equiv RCC_APB2ENR, 0x60
-        .equiv RCC_APB2ENR_SAI1EN, 21
-    .equiv RCC_CCIPR, 0x88
-        .equiv RCC_CCIPR_I2C1SEL, 12 @ [2] IC21 clock source selection
-        .equiv RCC_CCIPR_SAI1SEL, 22 @ [2] SAI1 clock source selection
-.equiv FLASH, 0x40022000
-    .equiv FLASH_ACR, 0x00
-        .equiv FLASH_ACR_LATENCY, 0
-        .equiv FLASH_ACR_PRFTEN,  8
-.equiv GPIOB, 0x48000400
-.equiv GPIOE, 0x48001000
-    .equiv GPIOx_MODER,   0x00
-    .equiv GPIOx_OTYPER,  0x04
-    .equiv GPIOx_OSPEEDR, 0x08
-    .equiv GPIOx_PUPDR,   0x0C
-    .equiv GPIOx_ODR,     0x14
-    .equiv GPIOx_BSRR,    0x18
-    .equiv GPIOx_AFRL,    0x20
-    .equiv GPIOx_BRR,     0x28
-.equiv NVIC, 0xE000E100
-    .equiv NVIC_ISER0, 0x000
-    .equiv NVIC_ISER1, 0x004
-    .equiv NVIC_IPR7,  0x31C
-    .equiv NVIC_IPR8,  0x320
+.set I2C1, 0x40005400
+    .set I2Cx_CR1, 0x00
+        .set I2Cx_CR1_PE, 0
+        .set I2Cx_CR1_TXIE, 1
+        .set I2Cx_CR1_RXIE, 2
+        .set I2Cx_CR1_ADDRIE, 3
+        .set I2Cx_CR1_NACKIE, 4
+        .set I2Cx_CR1_STOPIE, 5
+        .set I2Cx_CR1_TCIE, 6
+        .set I2Cx_CR1_ERRIE, 7
+        .set I2Cx_CR1_DNF, 8 @ [4]
+        .set I2Cx_CR1_ANFOFF, 12
+        .set I2Cx_CR1_TXDMAEN, 14
+        .set I2Cx_CR1_RXDMAEN, 15
+        .set I2Cx_CR1_SBC, 16
+        .set I2Cx_CR1_NOSTRETCH, 17
+        .set I2Cx_CR1_WUPEN, 18
+        .set I2Cx_CR1_GCEN, 19
+        .set I2Cx_CR1_SMBHEN, 20
+        .set I2Cx_CR1_SMBDEN, 21
+        .set I2Cx_CR1_ALERTEN, 22
+        .set I2Cx_CR1_PECEN, 23
+    .set I2Cx_CR2, 0x04
+        .set I2Cx_CR2_SADD0, 0
+        .set I2Cx_CR2_SADD, 1 @ [9]
+        .set I2Cx_CR2_RD_WRN, 10
+        .set I2Cx_CR2_ADD10, 11
+        .set I2Cx_CR2_HEAD10R, 12
+        .set I2Cx_CR2_START, 13
+        .set I2Cx_CR2_STOP, 14
+        .set I2Cx_CR2_NACK, 15
+        .set I2Cx_CR2_NBYTES, 16 @ [8]
+        .set I2Cx_CR2_RELOAD, 24
+        .set I2Cx_CR2_AUTOEND, 25
+        .set I2Cx_CR2_PECBYTE, 26
+    .set I2Cx_OAR1, 0x08
+        .set I2Cx_OAR1_OA1EN, 15
+    .set I2Cx_OAR2, 0x0C
+        .set I2Cx_OAR2_OA2, 1 @ [7]
+        .set I2Cx_OAR2_OA2MSK, 8 @ [3]
+        .set I2Cx_OAR2_OA2EN, 15
+    .set I2Cx_TIMINGR, 0x10
+    .set I2Cx_TIMEOUTR, 0x14
+    .set I2Cx_ISR, 0x18
+        .set I2Cx_ISR_TXIS, 1
+        .set I2Cx_ISR_RXNE,2
+        .set I2Cx_ISR_STOPF, 5
+        .set I2Cx_ISR_TC, 6
+        .set I2Cx_ISR_TCR, 7
+        .set I2Cx_ISR_BUSY, 15
+    .set I2Cx_ICR, 0x1C
+        .set I2Cx_ICR_STOPF, 5
+    .set I2Cx_PECR, 0x20
+    .set I2Cx_RXDR, 0x24
+    .set I2Cx_TXDR, 0x28
+.set PWR, 0x40007000
+    .set PWR_CR1, 0x00
+        .set PWR_CR1_DBP, 8
+        .set PWR_CR1_VOS, 9 @ [2] Voltage range
+    .set PWR_CR2, 0x04
+        .set PWR_CR2_IOSV, 9
+    .set PWR_SR2, 0x14
+        .set PWR_SR2_VOSF, 10
+.set SAI1, 0x40015400
+    .set SAIx_GCR, 0x0
+        .set SAIx_GCR_SYNCIN, 0 @ [2]
+        .set SAIx_GCR_SYNCOUT, 4 @ [2]
+    .set SAIx_ACR1, 0x4
+        .set SAIx_xCR1_MODE,     0
+        .set SAIx_xCR1_PRTCFG,   2 @ [2]
+        .set SAIx_xCR1_DS,       5 @ [3]
+        .set SAIx_xCR1_LSBFIRST, 8
+        .set SAIx_xCR1_CKSTR,    9
+        .set SAIx_xCR1_SYNCEN,  10 @ [2]
+        .set SAIx_xCR1_MONO,    12
+        .set SAIx_xCR1_OUTDRIV, 13
+        .set SAIx_xCR1_SAIxEN,  16
+        .set SAIx_xCR1_DMAEN,   17
+        .set SAIx_xCR1_NODIV,   19
+        .set SAIx_xCR1_MCKDIV,  20 @ [4]
+    .set SAIx_ACR2, 0x8
+        .set SAIx_xCR2_FTH,     0 @ [3]
+        .set SAIx_xCR2_FFLUSH,  3
+        .set SAIx_xCR2_TRIS,    4
+        .set SAIx_xCR2_MUTE,    5
+        .set SAIx_xCR2_MUTEVAL, 6
+        .set SAIx_xCR2_MUTECNT, 7 @ [6]
+        .set SAIx_xCR2_CPL,    13
+        .set SAIx_xCR2_COMP,   14 @ [2]
+    .set SAIx_AFRCR, 0xC
+        .set SAIx_xFRCR_FRL,    0 @ [8]
+        .set SAIx_xFRCR_FSALL,  8 @ [7]
+        .set SAIx_xFRCR_FSDEF, 16
+        .set SAIx_xFRCR_FSPOL, 17
+        .set SAIx_xFRCR_FSOFF, 18
+    .set SAIx_ASLOTR, 0x10
+        .set SAIx_xSLOTR_FBOFF, 0 @ [5]
+        .set SAIx_xSLOTR_SLOTSZ, 6 @ [2]
+        .set SAIx_xSLOTR_NBSLOT, 8 @ [4]
+        .set SAIx_xSLOTR_SLOTEN, 16 @ [16]
+    .set SAIx_ASR, 0x18
+        .set SAIx_xSR_FLVL, 16 @ [3]
+    .set SAIx_ADR, 0x20
+.set RCC, 0x40021000
+    .set RCC_CR, 0x00
+        .set RCC_CR_MSION,       0 @ MSI enable
+        .set RCC_CR_MSIRDY,      1 @ MSI clock ready
+        .set RCC_CR_MSIPLLEN,    2 @ MSI clock PLL enable
+        .set RCC_CR_MSIRGSEL,    3 @ MSI clock range selection
+        .set RCC_CR_MSIRANGE,    4 @ [4] MSI clock ranges
+        .set RCC_CR_HSION,       8 @ HSI16 clock enable
+        .set RCC_CR_HSIKERON,    9 @ HSI16 always enable for peripheral kernels
+        .set RCC_CR_HSIRDY,     10 @ HSI16 clock ready
+        .set RCC_CR_HSIASFS,    11 @ HSI16 automatic start from stop
+        .set RCC_CR_HSEON,      16 @ HSE clock enable
+        .set RCC_CR_HSERDY,     17 @ HSE clock ready
+        .set RCC_CR_HSEBYP,     18 @ HSE crystal oscillator bypass
+        .set RCC_CR_CSSON,      19 @ Clock security system enable
+        .set RCC_CR_PLLON,      24 @ Main PLL enable
+        .set RCC_CR_PLLRDY,     25 @ Main PLL clock ready
+        .set RCC_CR_PLLSAI1ON,  26 @ SAI1 PLL enable
+        .set RCC_CR_PLLSAI1RDY, 27 @ SAI1 PLL clock ready
+        .set RCC_CR_PLLSAI2ON,  28 @ SAI2 PLL enable
+        .set RCC_CR_PLLSAI2RDY, 29 @ SAI2 PLL clock ready
+    .set RCC_ICSCR, 0x04
+        .set RCC_ICSCR_MSICAL,   0 @ [8] MSI clock calibration
+        .set RCC_ICSCR_MSITRIM,  8 @ [8] MSI clock trimming
+        .set RCC_ICSCR_HSICAL,  16 @ [8] HSI16 clock calibration
+        .set RCC_ICSCR_HSITRIM, 24 @ [5] HSI16 clock trimming
+    .set RCC_CFGR, 0x08
+        .set RCC_CFGR_SW,        0 @ [2] System clock switch
+        .set RCC_CFGR_SWS,       2 @ [2] System clock switch status
+        .set RCC_CFGR_HPRE,      4 @ [4] AHB prescaler
+        .set RCC_CFGR_PPRE1,     8 @ [3] APB low-speed prescaler (APB1)
+        .set RCC_CFGR_PPRE2,    11 @ [3] APB high-speed prescaler (APB2)
+        .set RCC_CFGR_STOPWUCK, 15 @ Wakeup from Stop and CSS backup clock selection
+        .set RCC_CFGR_MCOSEL,   24 @ [3] Microcontroller clock output
+        .set RCC_CFGR_MCOPRE,   28 @ [3] Microcontroller clock output prescaler
+    .set RCC_PLLCFGR, 0x0C
+        .set RCC_PLLCFGR_PLLSRC,  0 @ [2] Main PLL, PLLSAI1, and PLLSAI2 entry clock source
+        .set RCC_PLLCFGR_PLLM,    4 @ [3] Division factor for the main PLL and audio PLL input clock
+        .set RCC_PLLCFGR_PLLN,    8 @ [7] Main PLL multiplication factor for VCO
+        .set RCC_PLLCFGR_PLLPEN, 16 @ Main PLL PLLSAI3CLK output enable
+        .set RCC_PLLCFGR_PLLP,   17 @ Main PLL division factor for PLLSAI3CLK (SAI1 & SAI2 clock)
+        .set RCC_PLLCFGR_PLLQEN, 20 @ Main PLL PLL48M1CLK output enable
+        .set RCC_PLLCFGR_PLLQ,   21 @ [2] Main PLL division factor for PLL48M1CLK (48 MHz clock)
+        .set RCC_PLLCFGR_PLLREN, 24 @ Main PLL PLLCLK output enable
+        .set RCC_PLLCFGR_PLLR,   25 @ [2] Main PLL division factor for PLLCLK (system clock)
+    .set RCC_PLLSAI1CFGR, 0x10
+        .set RCC_PLLSAI1CFGR_PLLSAI1N,    8 @ [7] SAI1PLL multiplication factor for VCO
+        .set RCC_PLLSAI1CFGR_PLLSAI1PEN, 16 @ SAI1PLL PLLSAI1CLK output enable
+        .set RCC_PLLSAI1CFGR_PLLSAI1P,   17 @ [2] SAI1PLL division factor for PLLSAI1CLK (SAI1 or SAI2 clock)
+        .set RCC_PLLSAI1CFGR_PLLSAI1QEN, 20 @ SAI1PLL PLL48M2CLK output enable
+        .set RCC_PLLSAI1CFGR_PLLSAI1Q,   21 @ [2] SAI1PLL division factor for PLL48M2CLK (48 MHz clock)
+        .set RCC_PLLSAI1CFGR_PLLSAI1REN, 24 @ PLLSAI1 PLLADC1CLK output enable
+        .set RCC_PLLSAI1CFGR_PLLSAI1R,   25 @ [2] PLLSAI1 division factor for PLLADC1CLK (ADC clock)
+    .set RCC_PLLSAI2CFGR, 0x14
+        .set RCC_PLLSAI2CFGR_PLLSAI2N,    8 @ [7] SAI2PLL multiplication factor for VCO
+        .set RCC_PLLSAI2CFGR_PLLSAI2PEN, 16 @ SAI2PLL PLLSAI2CLK output enable
+        .set RCC_PLLSAI2CFGR_PLLSAI2P,   17 @ [2] SAI2PLL division factor for PLLSAI2CLK (SAI1 or SAI2 clock)
+        .set RCC_PLLSAI2CFGR_PLLSAI2REN, 24 @ PLLSAI2 PLLADC2CLK output enable
+        .set RCC_PLLSAI2CFGR_PLLSAI2R,   25 @ [2] PLLSAI2 division factor for PLLADC2CLK (ADC clock)
+    .set RCC_CIER, 0x18
+        .set RCC_CIER_LSIRDYIE,     0 @ LSI ready interrupt enable
+        .set RCC_CIER_LSERDYIE,     1 @ LSE ready interrupt enable
+        .set RCC_MSIRDYIE,          2 @ MSI ready interrupt enable
+        .set RCC_CIER_HSIRDYIE,     3 @ HSI16 ready interrupt enable
+        .set RCC_CIER_HSERDYIE,     4 @ HSE ready interrupt enable
+        .set RCC_CIER_PLLRDYIE,     5 @ PLL ready interrupt enable
+        .set RCC_CIER_PLLSAI1RDYIE, 6 @ PLLSAI1 ready interrupt enable
+        .set RCC_CIER_PLLSAI2RDYIE, 7 @ PLLSAI2 ready interrupt enable
+        .set RCC_CIER_LSECSSIE,     9 @ LSE clock security system interrupt enable
+    .set RCC_CIFR, 0x1C
+        .set RCC_CIER_LSIRDYF,     0 @ LSI ready interrupt flag
+        .set RCC_CIER_LSERDYF,     1 @ LSE ready interrupt flag
+        .set RCC_MSIRDYF,          2 @ MSI ready interrupt flag
+        .set RCC_CIER_HSIRDYF,     3 @ HSI16 ready interrupt flag
+        .set RCC_CIER_HSERDYF,     4 @ HSE ready interrupt flag
+        .set RCC_CIER_PLLRDYF,     5 @ PLL ready interrupt flag
+        .set RCC_CIER_PLLSAI1RDYF, 6 @ PLLSAI1 ready interrupt flag
+        .set RCC_CIER_PLLSAI2RDYF, 7 @ PLLSAI2 ready interrupt flag
+        .set RCC_CIER_LSECSSF,     9 @ LSE clock security system interrupt flag
+    .set RCC_CICR, 0x20
+        .set RCC_CIER_LSIRDYC,     0 @ LSI ready interrupt clear
+        .set RCC_CIER_LSERDYC,     1 @ LSE ready interrupt clear
+        .set RCC_CIER_MSIRDYC,     2 @ MSI ready interrupt clear
+        .set RCC_CIER_HSIRDYC,     3 @ HSI16 ready interrupt clear
+        .set RCC_CIER_HSERDYC,     4 @ HSE ready interrupt clear
+        .set RCC_CIER_PLLRDYC,     5 @ PLL ready interrupt clear
+        .set RCC_CIER_PLLSAI1RDYC, 6 @ PLLSAI1 ready interrupt clear
+        .set RCC_CIER_PLLSAI2RDYC, 7 @ PLLSAI2 ready interrupt clear
+        .set RCC_CIER_LSECSSC,     9 @ LSE clock security system interrupt clear
+    .set RCC_APB1RSTR1, 0x38
+        .set RCC_APB1RSTR1_I2C1RST, 21
+    .set RCC_AHB2ENR, 0x4C
+        .set RCC_AHB2ENR_GPIOBEN, 1
+        .set RCC_AHB2ENR_GPIOEEN, 4
+    .set RCC_APB1ENR1, 0x58
+        .set RCC_APB1ENR1_I2C1EN, 21
+        .set RCC_APB1ENR1_PWREN, 28
+    .set RCC_APB2ENR, 0x60
+        .set RCC_APB2ENR_SAI1EN, 21
+    .set RCC_CCIPR, 0x88
+        .set RCC_CCIPR_I2C1SEL, 12 @ [2] I2C1 clock source selection
+        .set RCC_CCIPR_SAI1SEL, 22 @ [2] SAI1 clock source selection
+        .set RCC_CCIPR_CLK48SEL, 26 @ [2] USB, RNG clock source selection
+    .set RCC_BDCR, 0x90
+        .set RCC_BDCR_LSEON, 0
+        .set RCC_BDCR_LSERDY, 1
+.set FLASH, 0x40022000
+    .set FLASH_ACR, 0x00
+        .set FLASH_ACR_LATENCY, 0
+        .set FLASH_ACR_PRFTEN,  8
+.set GPIOB, 0x48000400
+.set GPIOE, 0x48001000
+    .set GPIOx_MODER,   0x00
+        .set GPIOx_MODER_MODE0, 0 @ [2]
+        .set GPIOx_MODER_MODE1, 2 @ [2]
+        .set GPIOx_MODER_MODE2, 4 @ [2]
+        .set GPIOx_MODER_MODE3, 6 @ [2]
+        .set GPIOx_MODER_MODE4, 8 @ [2]
+        .set GPIOx_MODER_MODE5, 10 @ [2]
+        .set GPIOx_MODER_MODE6, 12 @ [2]
+        .set GPIOx_MODER_MODE7, 14 @ [2]
+        .set GPIOx_MODER_MODE8, 16 @ [2]
+        .set GPIOx_MODER_MODE9, 18 @ [2]
+        .set GPIOx_MODER_MODE10, 20 @ [2]
+        .set GPIOx_MODER_MODE11, 22 @ [2]
+        .set GPIOx_MODER_MODE12, 24 @ [2]
+        .set GPIOx_MODER_MODE13, 26 @ [2]
+        .set GPIOx_MODER_MODE14, 28 @ [2]
+        .set GPIOx_MODER_MODE15, 30 @ [2]
+    .set GPIOx_OTYPER,  0x04
+        .set GPIOx_OTYPER_OT0, 0
+        .set GPIOx_OTYPER_OT1, 1
+        .set GPIOx_OTYPER_OT2, 2
+        .set GPIOx_OTYPER_OT3, 3
+        .set GPIOx_OTYPER_OT4, 4
+        .set GPIOx_OTYPER_OT5, 5
+        .set GPIOx_OTYPER_OT6, 6
+        .set GPIOx_OTYPER_OT7, 7
+        .set GPIOx_OTYPER_OT8, 8
+        .set GPIOx_OTYPER_OT9, 9
+        .set GPIOx_OTYPER_OT10, 10
+        .set GPIOx_OTYPER_OT11, 11
+        .set GPIOx_OTYPER_OT12, 12
+        .set GPIOx_OTYPER_OT13, 13
+        .set GPIOx_OTYPER_OT14, 14
+        .set GPIOx_OTYPER_OT15, 15
+    .set GPIOx_OSPEEDR, 0x08
+        .set GPIOx_OSPEEDR_OSPEED0, 0 @ [2]
+        .set GPIOx_OSPEEDR_OSPEED1, 2 @ [2]
+        .set GPIOx_OSPEEDR_OSPEED2, 4 @ [2]
+        .set GPIOx_OSPEEDR_OSPEED3, 6 @ [2]
+        .set GPIOx_OSPEEDR_OSPEED4, 8 @ [2]
+        .set GPIOx_OSPEEDR_OSPEED5, 10 @ [2]
+        .set GPIOx_OSPEEDR_OSPEED6, 12 @ [2]
+        .set GPIOx_OSPEEDR_OSPEED7, 14 @ [2]
+        .set GPIOx_OSPEEDR_OSPEED8, 16 @ [2]
+        .set GPIOx_OSPEEDR_OSPEED9, 18 @ [2]
+        .set GPIOx_OSPEEDR_OSPEED10, 20 @ [2]
+        .set GPIOx_OSPEEDR_OSPEED11, 22 @ [2]
+        .set GPIOx_OSPEEDR_OSPEED12, 24 @ [2]
+        .set GPIOx_OSPEEDR_OSPEED13, 26 @ [2]
+        .set GPIOx_OSPEEDR_OSPEED14, 28 @ [2]
+        .set GPIOx_OSPEEDR_OSPEED15, 30 @ [2]
+    .set GPIOx_PUPDR,   0x0C
+        .set GPIOx_PUPDR_PUPD0, 0 @ [2]
+        .set GPIOx_PUPDR_PUPD1, 2 @ [2]
+        .set GPIOx_PUPDR_PUPD2, 4 @ [2]
+        .set GPIOx_PUPDR_PUPD3, 6 @ [2]
+        .set GPIOx_PUPDR_PUPD4, 8 @ [2]
+        .set GPIOx_PUPDR_PUPD5, 10 @ [2]
+        .set GPIOx_PUPDR_PUPD6, 12 @ [2]
+        .set GPIOx_PUPDR_PUPD7, 14 @ [2]
+        .set GPIOx_PUPDR_PUPD8, 16 @ [2]
+        .set GPIOx_PUPDR_PUPD9, 18 @ [2]
+        .set GPIOx_PUPDR_PUPD10, 20 @ [2]
+        .set GPIOx_PUPDR_PUPD11, 22 @ [2]
+        .set GPIOx_PUPDR_PUPD12, 24 @ [2]
+        .set GPIOx_PUPDR_PUPD13, 26 @ [2]
+        .set GPIOx_PUPDR_PUPD14, 28 @ [2]
+        .set GPIOx_PUPDR_PUPD15, 30 @ [2]
+    .set GPIOx_ODR,     0x14
+    .set GPIOx_BSRR,    0x18
+        .set GPIOx_BSRR_BS0, 0
+        .set GPIOx_BSRR_BS1, 1
+        .set GPIOx_BSRR_BS2, 2
+        .set GPIOx_BSRR_BS3, 3
+        .set GPIOx_BSRR_BS4, 4
+        .set GPIOx_BSRR_BS5, 5
+        .set GPIOx_BSRR_BS6, 6
+        .set GPIOx_BSRR_BS7, 7
+        .set GPIOx_BSRR_BS8, 8
+        .set GPIOx_BSRR_BS9, 9
+        .set GPIOx_BSRR_BS10, 10
+        .set GPIOx_BSRR_BS11, 11
+        .set GPIOx_BSRR_BS12, 12
+        .set GPIOx_BSRR_BS13, 13
+        .set GPIOx_BSRR_BS14, 14
+        .set GPIOx_BSRR_BS15, 15
+        .set GPIOx_BSRR_BR0, 16
+        .set GPIOx_BSRR_BR1, 17
+        .set GPIOx_BSRR_BR2, 18
+        .set GPIOx_BSRR_BR3, 19
+        .set GPIOx_BSRR_BR4, 20
+        .set GPIOx_BSRR_BR5, 21
+        .set GPIOx_BSRR_BR6, 22
+        .set GPIOx_BSRR_BR7, 23
+        .set GPIOx_BSRR_BR8, 24
+        .set GPIOx_BSRR_BR9, 25
+        .set GPIOx_BSRR_BR10, 26
+        .set GPIOx_BSRR_BR11, 27
+        .set GPIOx_BSRR_BR12, 28
+        .set GPIOx_BSRR_BR13, 29
+        .set GPIOx_BSRR_BR14, 30
+        .set GPIOx_BSRR_BR15, 31
+    .set GPIOx_AFRL,    0x20
+        .set GPIOx_AFRL_AFSEL0, 0 @ [4]
+        .set GPIOx_AFRL_AFSEL1, 4 @ [4]
+        .set GPIOx_AFRL_AFSEL2, 8 @ [4]
+        .set GPIOx_AFRL_AFSEL3, 12 @ [4]
+        .set GPIOx_AFRL_AFSEL4, 16 @ [4]
+        .set GPIOx_AFRL_AFSEL5, 20 @ [4]
+        .set GPIOx_AFRL_AFSEL6, 24 @ [4]
+        .set GPIOx_AFRL_AFSEL7, 28 @ [4]
+    .set GPIOx_BRR,     0x28
+.set CS43L22, 0x94
+    .set CS43L22_ID_01, 0x01
+    .set CS43L22_PWR1_02, 0x02
+    .set CS43L22_PWR2_04, 0x04
+    .set CS43L22_CLK_05, 0x05
+    .set CS43L22_ITRFC1_06, 0x06
+    .set CS43L22_ZCSR_0A, 0x0A
+    .set CS43L22_MISC_0E, 0x0E
+    .set CS43L22_PCMA_1A, 0x1A
+    .set CS43L22_PCMB_1B, 0x1B
+    .set CS43L22_TONE_1F, 0x1F
+    .set CS43L22_MSTVOLA_20, 0x20
+    .set CS43L22_MSTVOLB_21, 0x21
+    .set CS43L22_LIMITCTRL2_28, 0x28
