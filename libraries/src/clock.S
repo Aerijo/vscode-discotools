@@ -51,6 +51,7 @@
  * 3. Set instruction prefetch (3.3.4)
  * 4. Configure the clocks
  */
+.global clock_init
 .type clock_init, %function
 clock_init:
     @ Enable PWR peripheral
