@@ -190,6 +190,7 @@ audio_init:
     orr r1, (1 << SAIx_xSLOTR_NBSLOT)
     .set TMP, 0xFFFF << SAIx_xSLOTR_SLOTEN @ Set first two slots as enabled
     ldr r2, =TMP
+    bic r1, r2
     orr r1, (0b11 << SAIx_xSLOTR_SLOTEN)
     str r1, [r0, SAIx_ASLOTR]
 
