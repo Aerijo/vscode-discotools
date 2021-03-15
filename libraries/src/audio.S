@@ -42,6 +42,17 @@
  * @pins B6, B7, E2-6
  */
 
+@ Convenience function for both clock + audio init. Do not call `clock_init` if using this.
+.global init
+.type init, %function
+init:
+    push {lr}
+    bl clock_init
+    bl audio_init
+    pop {pc}
+.size init, . - init
+
+
 .global audio_init
 .type audio_init, %function
 audio_init:
@@ -447,6 +458,11 @@ audio_play_sample:
 .size audio_play_sample, . - audio_play_sample
 
 
+@ Alias BSP_AUDIO_OUT_Play_Sample (name used by HAL library) to audio_play_sample
+.global BSP_AUDIO_OUT_Play_Sample
+.thumb_set BSP_AUDIO_OUT_Play_Sample, audio_play_sample
+
+
 /**
  * Reads the external DAC ID and revision number, ensuring
  * it is the right one. Also makes sure the I2C read is
@@ -463,8 +479,8 @@ cs43l22_verify:
     cmp r1, 0b11100
     bne 2f
 
-    and r1, r0, 0b111
-    tst r1, 1 << 2
+    and r2, r0, 0b111
+    tst r2, 1 << 2
     bne 3f
 
     pop {pc}
