@@ -7,7 +7,7 @@
  * @brief
  *   Library to configure the board clocks for maximum speed + audio support + RNG support
  *
- *   The board has several builin clocks. These clocks can be connected to various multipliers
+ *   The board has several builtin clocks. These clocks can be connected to various multipliers
  *   and dividers, and the resulting signals can be passed to to the various peripherals. See
  *   the STM32L476VGT6 Data Sheet 3.11 Figure 3 for a complete diagram of the connections.
  *
@@ -22,7 +22,7 @@
  *   - Divide by 6 to get 8MHz PLL VCO input
  *   - Multiply by 20 to get PLL input (160 MHz)
  *   - Divide by 2 to get 80 MHz SYSCLK
- *   - Multiply by 43 to get PLLSAI1 input (344 MHz)
+ *   - Multiply PLL VCO by 43 to get PLLSAI1 input (344 MHz)
  *   - Divide by 7 to get 49.142857143 MHz SAI1 input
  *   - Divide by 4 to get 12.285714286 MHz MCLK (47.991071 kHz FS freq)
  *
